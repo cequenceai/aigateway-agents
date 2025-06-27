@@ -1,0 +1,7 @@
+project-env/
+.env
+langgraph/__pycache__/*
+
+# Ignore all text files in the langgraph directory
+langgraph/**/*.txt
+ui/node_modules/
