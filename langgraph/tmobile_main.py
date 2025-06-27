@@ -5,7 +5,7 @@ from typing import Optional
 import json
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel, Field
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 # Import the compiled app from the workflow file
 from tmobile_workflow import app as tmobile_app
@@ -40,7 +40,7 @@ class InvokeRequest(BaseModel):
     user_message: str = Field(..., description="The user's message to the agent, including the address.")
 
 class InvokeResponse(BaseModel):
-    ai_response: Optional[str] = Field(None, description="The last AI message from the workflow.")
+    ai_response: Optional[list]
     # progress: Optional[str] = Field(None, description="The current progress step in the workflow.")
     # is_eligible: Optional[bool] = Field(None, description="The eligibility status.")
     # available_plans: Optional[dict] = Field(None, description="The available service plans.")
@@ -73,13 +73,13 @@ async def invoke_workflow(
         config = {"configurable": {"thread_id": conversation_id}}
         
         # The first node in the workflow expects 'service_address_str'
-        inputs = {"service_address_str": request.user_message}
+        inputs = {"user_messages": [HumanMessage(content=request.user_message)]}
         
         # The tmobile_app is stateful when provided with a thread_id
         final_state = await tmobile_app.ainvoke(inputs, config=config)
 
         # Extract the last AI message from the state
-        ai_content = json.dumps(final_state["available_plans"])
+        ai_content = final_state["available_plans"]
         # messages = final_state.get("messages", [])
         # if messages:
         #     last_message = messages[-1]

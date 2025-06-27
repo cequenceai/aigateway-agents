@@ -13,6 +13,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph.message import add_messages
+from langchain_core.messages.utils import count_tokens_approximately, trim_messages
 from langgraph.types import Command
 from langgraph.constants import Send
 import asyncio
@@ -50,7 +51,7 @@ class GraphState(TypedDict):
     verified_address_details: Optional[dict]
     is_eligible: Optional[str]
     eligibility_response: Optional[dict]
-    available_plans: Optional[dict]
+    available_plans: Optional[list]
     cart_id: Optional[str]
     selected_plan_details: Optional[dict]
     credit_check_passed: Optional[bool]
@@ -116,8 +117,6 @@ async def _get_mcp_tools(
         _tools_cache[server_url] = tools
         logger.info("Fetched %s tools from %s", len(tools), server_url)
         return tools
-
-# --- Pydantic Model for Geocoders Tool Request ---
 
 
 # --- Agent Configuration ---
@@ -242,9 +241,12 @@ async def geocode_address_node(state: GraphState) -> GraphState:
     if tool_result.get("success"):
         return {"progress": "address_verified", "verified_address_details": json.loads(tool_result["result"])}
     else:
-        logger.error(f"Geocoding failed: {tool_result.get('error')}")
-        return {"progress": "end", "messages": [AIMessage(content=f"Failed to verify address. Error: {tool_result.get('error')}.")]}
-
+        error_message = f"Geocoding failed: {tool_result.get('error')}"
+        logger.error(error_message)
+        # To retry, we can stay in the same state and just update the messages.
+        # The supervisor will then route back to this node if the logic is set up for retries.
+        # For now, let's just end the flow with an error message.
+        return {"progress": "end", "ai_messages": [AIMessage(content=f"I'm sorry, I couldn't verify that address. Please try again. Error: {error_message}")]}
 
 async def check_eligibility_node(state: GraphState) -> GraphState:
     """
@@ -299,11 +301,17 @@ async def check_eligibility_node(state: GraphState) -> GraphState:
     if tool_result.get("success"):
         is_eligible = json.loads(tool_result["result"]).get("status", "ineligible")
         logger.info(f"Eligibility check successful. Eligible: {is_eligible}")
-        return {
-            "progress": "eligibility_checked",
-            "is_eligible": is_eligible,
-            "eligibility_response": tool_result["result"]
-        }
+        if is_eligible == "eligible":
+            return {
+                "progress": "eligibility_checked",
+                "is_eligible": is_eligible,
+                "eligibility_response": tool_result["result"]
+            }
+        else:
+            return Command(
+                update={"ai_messages": [AIMessage(content= "You are not eligible for a home internet plan. Please try again with a different address.")]},
+                goto=END
+            )
     else:
         error_message = f"Eligibility check failed: {tool_result.get('error')}"
         logger.error(error_message)
@@ -352,13 +360,24 @@ async def list_plans_node(state: GraphState) -> GraphState:
         logger.error(error_message)
         return {"progress": "end", "messages": [AIMessage(content=error_message)]}
 
-    available_plans_data = json.loads(get_plans_result["result"])
-    print(available_plans_data)
-    logger.info(f"Successfully fetched plans.")
+    available_plans_data = json.loads(get_plans_result["result"]).get("plans", [])
+    if available_plans_data:
+        available_plans = [
+            {   "id": plan.get("offerFamilyId"),
+                "name": plan.get("displayName"),
+                "price": plan.get("price").get("linePlanPrice")[0].get("monthlyPrice").get("listPrice").get("amount")
+            }
+            for plan in available_plans_data
+        ]
+    else:
+        available_plans = []
+    
+    # print(available_plans_data)
+    logger.info(f"Successfully fetched plans: {available_plans}")
 
     return {
         "progress": "plans_presented",
-        "available_plans": available_plans_data,
+        "available_plans": available_plans,
         "cart_id": cart_id
     }
 
