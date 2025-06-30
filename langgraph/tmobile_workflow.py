@@ -392,11 +392,17 @@ async def list_plans_node(state: GraphState) -> GraphState:
     if available_plans_data:
         for plan in available_plans_data:
             available_plans.append({
-                "id": plan.get("offerFamilyId"),
-                "name": plan.get("name"),
-                "description": plan.get("description"),
-                "price": plan.get("price"),
-            })
+            "id": plan.get("offerFamilyId"),
+            # keep the first non-empty field
+            "name": (
+                plan.get("displayName")
+                or plan.get("name")
+                or plan.get("planName")
+                or plan.get("shortDescription")
+            ),
+            # flatten the price so the UI doesn’t have to dig for it
+            "price": plan["price"]["cartPlanPrice"]["monthlyPrice"]["salePrice"]["amount"],
+        })
         logger.info(f"Successfully fetched {len(available_plans)} plans")
     else:
         logger.error("No plans found")
