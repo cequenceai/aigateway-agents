@@ -119,7 +119,7 @@ async def _get_mcp_tools(
 
         _tools_cache[server_url] = tools
         logger.info("Fetched %s tools from %s", len(tools), server_url)
-        logger.info(f"Tools: {tools}")
+        # logger.info(f"Tools: {tools}")
         return tools
 
 
@@ -199,7 +199,7 @@ async def call_tool(tool_name: str, **kwargs) -> dict:
             raise ValueError(f"Tool '{tool_name}' not found on the MCP server.")
             
         result = await target_tool.ainvoke(kwargs)
-        logger.info(f"Tool '{tool_name}' returned: {result}")
+        logger.info(f"Tool '{tool_name}' returned: {json.dumps(result, indent=4)}")
         return {"success": True, "result": result}
     except Exception as e:
         logger.error(f"Error calling tool '{tool_name}': {e}", exc_info=True)
@@ -343,12 +343,14 @@ async def list_plans_node(state: GraphState) -> GraphState:
         logger.error(error_message)
         return {"progress": "end", "messages": [AIMessage(content=error_message)]}
     
-    plan_tags = eligibility_data.get("planTags", [])
+    logger.info(f"Eligibility data: {json.dumps(eligibility_data, indent=4)}")
+    plan_tags = eligibility_data.get("hintEligibleCategories", [])
     geo_segments = eligibility_data.get("geoSegments", [])
     
     # Filter out capped and nomad plan tags as per business logic
+    logger.info(f"Plan tags: {plan_tags}")
     filtered_plan_tags = [tag for tag in plan_tags if tag.lower() not in ["capped", "nomad"]]
-    
+    logger.info(f"Filtered plan tags: {filtered_plan_tags}")
     # Default to nationwide if no geoSegments are returned
     if not geo_segments:
         geo_segments = ["nationwide"]
@@ -385,16 +387,20 @@ async def list_plans_node(state: GraphState) -> GraphState:
         return {"progress": "end", "messages": [AIMessage(content=error_message)]}
 
     available_plans_data = json.loads(get_plans_result["result"]).get("plans", [])
+    logger.info(f"Available number of plans: {len(available_plans_data)}")
+    available_plans = []
     if available_plans_data:
-        available_plans = [
-            {   "id": plan.get("offerFamilyId"),
-                "name": plan.get("displayName"),
-                "price": plan.get("price").get("linePlanPrice")[0].get("monthlyPrice").get("listPrice").get("amount")
-            }
-            for plan in available_plans_data
-        ]
+        for plan in available_plans_data:
+            available_plans.append({
+                "id": plan.get("offerFamilyId"),
+                "name": plan.get("name"),
+                "description": plan.get("description"),
+                "price": plan.get("price"),
+            })
+        logger.info(f"Successfully fetched {len(available_plans)} plans")
     else:
-        available_plans = []
+        logger.error("No plans found")
+        return {"progress": "end", "messages": [AIMessage(content="No plans found")]}
     
     # print(available_plans_data)
     logger.info(f"Successfully fetched plans: {available_plans}")
@@ -570,7 +576,7 @@ app = workflow.compile()
 
 async def main():
     """Runs the T-Mobile eligibility workflow."""
-    inputs = {"user_messages": [HumanMessage(content="am I eligible for a home internet plan , my address is 5201 great america pkwy, santa clara")]}
+    inputs = {"user_messages": [HumanMessage(content="am I eligible for a home internet plan , my address is 13708 Gillette St,Overland Park, KS 66221")]}
     result = await app.ainvoke(inputs)
     print(result["available_plans"])
 
