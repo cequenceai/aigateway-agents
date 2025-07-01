@@ -43,7 +43,8 @@ class GraphState(TypedDict):
     ai_messages      : Annotated[list, add_messages]
     user_messages    : Annotated[list, add_messages]
     progress         : Annotated[Literal[
-                        "start","address_verified",
+                        "start","address_verified", "awaiting_address",
+                        "awaiting_eligibility",
                         "eligibility_checked","plans_presented",
                         "plan_selected","end"],
                         "Current stage"]
@@ -148,7 +149,8 @@ async def geocode_address_node(state:GraphState)->GraphState:
 async def check_eligibility_node(state:GraphState)->GraphState:
     data = state.get("verified_address_details",{})
     if not data.get("geocoders"):
-        return {"progress":"end","ai_messages":[AIMessage(content="Address verification failed.")]}
+        return Command(update={"progress":"awaiting_eligibility","ai_messages":[AIMessage(content="Address not eligible. Please try another address.")],
+                               "goto":"router"})
 
     g      = data["geocoders"][0]
     meta   = g["meta"]
@@ -173,10 +175,6 @@ def router_node(state:GraphState):
     last      = state["user_messages"][-1].content.strip()
     plan_ids  = {p["id"] for p in state.get("available_plans",[])}
     if state.get("progress") == "awaiting_address":
-        # print("awaiting_address")
-        # logger.info("awaiting_address")
-        # logger.info("last=%s", last)
-        # logger.info("plan_ids=%s", plan_ids)
         if ADDRESS_HINT.search(last):
             return Command(update={"ai_messages":[AIMessage(content="Rechecking address…")]},
                            goto="geocode_address")
@@ -186,6 +184,10 @@ def router_node(state:GraphState):
     if not last:
         return Command(update={"ai_messages":[AIMessage(content="I didn't catch the address—could you repeat it?")]},
                        goto="router")
+    if state.get("progress") == "awaiting_eligibility":
+        return Command(update={"ai_messages":[AIMessage(content="Address not eligible. Please try another address.")],
+                               "progress":"awaiting_address",
+                               "goto":"router"})
     if last in plan_ids:
         # safe log (thread id if provided via config, else 'n/a')
         thread_id = state.get("__run_id__", "n/a")
