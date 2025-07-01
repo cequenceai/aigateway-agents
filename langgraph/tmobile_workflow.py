@@ -16,6 +16,8 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages.utils import count_tokens_approximately, trim_messages
 from langgraph.types import Command
 from langgraph.constants import Send
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import interrupt
 import asyncio
 
 
@@ -412,10 +414,12 @@ async def list_plans_node(state: GraphState) -> GraphState:
     logger.info(f"Successfully fetched plans: {available_plans}")
 
     return {
-        "progress": "plans_presented",
-        "available_plans": available_plans,
-        "plans_metadata": available_plans_data,
-    }
+            "progress": "plans_presented",
+            "available_plans": available_plans,
+            "plans_metadata": available_plans_data,
+        }
+
+
 
 
 async def add_plan_to_cart_node(state: GraphState) -> GraphState:
@@ -572,19 +576,24 @@ workflow.add_node("add_plan_to_cart", add_plan_to_cart_node)
 workflow.add_edge(START, "geocode_address")
 workflow.add_edge("geocode_address", "check_eligibility")
 workflow.add_edge("check_eligibility", "list_plans")
+# invoke again with the saved snapshot of the graph
 workflow.add_edge("list_plans", "add_plan_to_cart")
 workflow.add_edge("add_plan_to_cart", END)
 
+# create a checkpoint
+checkpointer = InMemorySaver()
 
 # Compile the graph
-app = workflow.compile()
+app = workflow.compile(checkpointer=checkpointer)
 
+config = {"configurable": {"thread_id": "123"}}
 
 async def main():
     """Runs the T-Mobile eligibility workflow."""
     inputs = {"user_messages": [HumanMessage(content="am I eligible for a home internet plan , my address is 13708 Gillette St,Overland Park, KS 66221")]}
-    result = await app.ainvoke(inputs)
-    print(result["available_plans"])
+    result = await app.ainvoke(inputs, config=config)
+    updated_result = await app.ainvoke(Command(resume={"selected_plan_id": "HMINTBKTI"}), config=config)
+    # print(result["__interrupt__"])
 
 if __name__ == "__main__":
     asyncio.run(main())
