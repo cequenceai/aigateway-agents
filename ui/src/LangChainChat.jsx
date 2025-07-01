@@ -1,28 +1,33 @@
 /* ------------------------------------------------------------------
    TMobileChatWidget.jsx – bubble launcher + Home-Internet chat
-   (minimise without un-mounting) – 2025-07-01 patch 2
+   (scroll-fix + minimise) – 2025-07-01 patch 3
 ------------------------------------------------------------------ */
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, X, ChevronDown, ChevronUp } from "lucide-react";
 
+/* tiny util */
 const cn = (...c) => c.filter(Boolean).join(" ");
 
-/* ─────────── atoms ─────────── */
+/* -------- basic atoms -------- */
 const Card = ({ children, className = "" }) => (
-  <div className={cn("flex flex-col rounded-2xl shadow-lg overflow-hidden", className)}>{children}</div>
+  <div className={cn("flex flex-col rounded-2xl shadow-lg overflow-hidden", className)}>
+    {children}
+  </div>
 );
+
 const Input = (p) => (
   <input
     {...p}
     className="border-2 border-magenta-dark rounded px-3 py-1.5 w-full text-black
-               placeholder:text-magenta-dark/50 focus:ring-2 focus:ring-magenta outline-none
-               disabled:opacity-50"
+               placeholder:text-magenta-dark/50 focus:ring-2 focus:ring-magenta
+               outline-none disabled:opacity-50"
   />
 );
-const Button = ({ children, className = "", ...r }) => (
+
+const Button = ({ children, className = "", ...rest }) => (
   <button
-    {...r}
+    {...rest}
     className={cn(
       "bg-gradient-to-r from-magenta to-magenta-dark hover:brightness-110 text-white rounded transition",
       "disabled:opacity-50 disabled:pointer-events-none",
@@ -33,10 +38,15 @@ const Button = ({ children, className = "", ...r }) => (
   </button>
 );
 
-/* quick-reply strip */
+/* -------- quick-reply pills -------- */
 const QuickReplies = ({ options = [], picked, onPick }) =>
   options.length ? (
-    <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex flex-wrap gap-2">
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex flex-wrap gap-2"
+    >
       {options.map((o) => (
         <Button
           key={o.value}
@@ -50,14 +60,14 @@ const QuickReplies = ({ options = [], picked, onPick }) =>
     </motion.div>
   ) : null;
 
-/* ─────────── core chat logic ─────────── */
+/* -------- chat component -------- */
 function LangChainChat({
-  baseUrl = "",
-  initPath = "/initialize",
-  invokePath = "/invoke",
-  heartbeatMs = 600_000,
+  baseUrl       = "",
+  initPath      = "/initialize",
+  invokePath    = "/invoke",
+  heartbeatMs   = 600_000,
   onBotMsg,
-  minimized = false,
+  minimized     = false,
 }) {
   const [conversation, setConversation] = useState(null);
   const [messages,     setMessages]     = useState([]);
@@ -69,16 +79,15 @@ function LangChainChat({
 
   const bottomRef = useRef(null);
 
-  /* bootstrap session */
+  /* ---- session bootstrap + heartbeat ---- */
   useEffect(() => {
     if (conversation) return;
     fetch(baseUrl + initPath, { method: "POST" })
       .then((r) => r.json())
       .then(({ conversation_id }) => setConversation(conversation_id))
-      .catch((e) => console.error("init failed", e));
+      .catch(console.error);
   }, [conversation, baseUrl, initPath]);
 
-  /* keep-alive ping */
   useEffect(() => {
     if (!conversation) return;
     const id = setInterval(
@@ -93,79 +102,73 @@ function LangChainChat({
     return () => clearInterval(id);
   }, [conversation, baseUrl, invokePath, heartbeatMs]);
 
-  /* autoscroll on new content */
+  /* ---- scroll helpers ---- */
   useEffect(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), [messages, suggestions]);
+  useEffect(() => { if (!minimized) bottomRef.current?.scrollIntoView({ behavior: "smooth" }); },
+            [minimized]);
 
-  /* snap to bottom when window is restored */
-  useEffect(() => {
-    if (!minimized) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [minimized]);
-
+  /* ---- helpers ---- */
   const addMsg = (role, content) => setMessages((m) => [...m, { role, content }]);
 
-  const send = useCallback(
-    async (txt, label = txt) => {
-      const body = txt.trim();
-      if (!body || !conversation) return;
+  const send = useCallback(async (txt, label = txt) => {
+    const body = txt.trim();
+    if (!body || !conversation) return;
 
-      setInput("");
-      setSuggestions([]);
-      addMsg("user", label);
-      setLoading(true);
+    setInput("");          /* clear field */
+    setSuggestions([]);    /* hide quick replies */
+    addMsg("user", label); /* echo */
+    setLoading(true);
 
-      try {
-        const r    = await fetch(baseUrl + invokePath, {
-          method : "POST",
-          headers: { "Content-Type": "application/json", "X-Conversation-ID": conversation },
-          body   : JSON.stringify({ user_message: body }),
+    try {
+      const r    = await fetch(baseUrl + invokePath, {
+        method : "POST",
+        headers: { "Content-Type": "application/json", "X-Conversation-ID": conversation },
+        body   : JSON.stringify({ user_message: body }),
+      });
+      const data = await r.json();
+
+      if (data.review_cart_url) setReviewURL(data.review_cart_url);
+
+      /* candidate plans? => quick-reply pills */
+      if (Array.isArray(data.ai_response)) {
+        const opts = data.ai_response.map((p) => {
+          const name  = p.name || p.displayName || p.planName || "Unnamed plan";
+          const price = typeof p.price === "number"
+                        ? p.price.toFixed(2)
+                        : p.price?.amount ?? p.price?.value ?? "";
+          return { label: price ? `${name} – $${price}` : name,
+                   value: p.id ?? p.offerFamilyId ?? p.value ?? name };
         });
-        const data = await r.json();
-
-        if (data.review_cart_url) setReviewURL(data.review_cart_url);
-
-        /* plans? → quick-replies */
-        if (Array.isArray(data.ai_response)) {
-          const opts = data.ai_response.map((p) => {
-            const name  = p.name || p.displayName || p.planName || "Unnamed plan";
-            const price =
-              typeof p.price === "number"
-                ? p.price.toFixed(2)
-                : p.price?.amount ?? p.price?.value ?? "";
-            return {
-              label: price ? `${name} – $${price}` : name,
-              value: p.id ?? p.offerFamilyId ?? p.value ?? name,
-            };
-          });
-          setPicked(null);
-          setSuggestions(opts);
-          return;
-        }
-
-        /* plain reply */
-        const botMsg =
-          typeof data.ai_response === "string"
-            ? data.ai_response
-            : JSON.stringify(data.ai_response, null, 2);
-        if (botMsg) {
-          addMsg("ai", botMsg);
-          onBotMsg?.();
-        }
-      } catch (e) {
-        addMsg("ai", `Request failed: ${e.message}`);
-      } finally {
-        setLoading(false);
+        setPicked(null);
+        setSuggestions(opts);
+        return;
       }
-    },
-    [conversation, baseUrl, invokePath, onBotMsg],
-  );
+
+      /* plain response */
+      const bot = typeof data.ai_response === "string"
+                  ? data.ai_response
+                  : JSON.stringify(data.ai_response, null, 2);
+      if (bot) {
+        addMsg("ai", bot);
+        onBotMsg?.();
+      }
+    } catch (e) {
+      addMsg("ai", `Request failed: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [conversation, baseUrl, invokePath, onBotMsg]);
 
   const disabled = loading || suggestions.length > 0;
 
-  /* template */
   return (
     <div className="flex flex-col h-full">
-      {/* message list */}
-      <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+      {/* -------- scrollable message list -------- */}
+      <div
+        className="flex-1 overflow-y-auto overscroll-contain
+                   scrollbar-thin scrollbar-thumb-magenta/70 scrollbar-track-transparent
+                   space-y-3 pr-1"
+      >
         {messages.map((m, i) => (
           <motion.div
             key={i}
@@ -185,7 +188,8 @@ function LangChainChat({
         ))}
 
         {loading && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="italic text-[13px] text-magenta-dark">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                      className="italic text-[13px] text-magenta-dark">
             thinking…
           </motion.div>
         )}
@@ -193,10 +197,7 @@ function LangChainChat({
         <QuickReplies
           options={suggestions}
           picked={picked}
-          onPick={(o) => {
-            setPicked(o.value);
-            send(o.value, o.label);
-          }}
+          onPick={(o) => { setPicked(o.value); send(o.value, o.label); }}
         />
 
         {reviewURL && (
@@ -211,12 +212,9 @@ function LangChainChat({
         <div ref={bottomRef} />
       </div>
 
-      {/* input row */}
+      {/* -------- input row -------- */}
       <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          send(input);
-        }}
+        onSubmit={(e) => { e.preventDefault(); send(input); }}
         className="flex gap-2 pt-3 shrink-0"
       >
         <Input
@@ -233,7 +231,7 @@ function LangChainChat({
   );
 }
 
-/* ─────────── bubble + panel wrapper (with minimise) ─────────── */
+/* -------- wrapper with minimise -------- */
 export default function TMobileChatWidget() {
   const [open,      setOpen]      = useState(false);
   const [unread,    setUnread]    = useState(0);
@@ -276,7 +274,7 @@ export default function TMobileChatWidget() {
         )}
       </AnimatePresence>
 
-      {/* floating chat panel (remains mounted) */}
+      {/* chat panel */}
       <AnimatePresence>
         {open && (
           <motion.div
@@ -290,7 +288,7 @@ export default function TMobileChatWidget() {
               minimized ? "h-[3.25rem]" : "h-[40vh]",
             )}
           >
-            <Card className="w-full h-full">
+            <Card className="w-full h-full overflow-hidden">
               {/* header */}
               <div className="flex items-center justify-between px-4 py-2
                               bg-gradient-to-r from-magenta to-magenta-dark text-white">
@@ -299,7 +297,6 @@ export default function TMobileChatWidget() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {/* minimize / restore */}
                   <button
                     onClick={() => setMinimized((m) => !m)}
                     className="p-1 rounded-full hover:bg-white/20 focus:outline-none"
@@ -308,7 +305,6 @@ export default function TMobileChatWidget() {
                     {minimized ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                   </button>
 
-                  {/* close */}
                   <button
                     onClick={() => setOpen(false)}
                     className="p-1 rounded-full hover:bg-white/20 focus:outline-none"
@@ -319,11 +315,12 @@ export default function TMobileChatWidget() {
                 </div>
               </div>
 
-              {/* body (keeps state) */}
+              {/* body */}
               <div
                 className={cn(
-                  "flex-1 bg-gradient-to-br from-magenta/5 to-white/70 flex flex-col transition-[max-height,padding] duration-200 ease-out",
-                  minimized ? "max-h-0 p-0 overflow-hidden" : "max-h-[1000px] p-4",
+                  "flex-1 min-h-0 bg-gradient-to-br from-magenta/5 to-white/70 flex flex-col",
+                  "transition-[max-height,padding] duration-200 ease-out",
+                  minimized ? "max-h-0 p-0 overflow-hidden" : "max-h-[1000px] p-4"
                 )}
               >
                 <LangChainChat minimized={minimized} onBotMsg={bumpUnread} />
