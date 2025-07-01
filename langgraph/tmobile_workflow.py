@@ -41,8 +41,9 @@ class GraphState(TypedDict):
     ai_messages      : Annotated[list, add_messages]
     user_messages    : Annotated[list, add_messages]
     progress         : Annotated[Literal[
-                        "start","address_verified","eligibility_checked",
-                        "plans_presented","plan_selected","end"],
+                        "start","awaiting_address","address_verified",
+                        "eligibility_checked","plans_presented",
+                        "plan_selected","end"],
                         "Current stage"]
     verified_address_details: Optional[dict]
     eligibility_response   : Optional[str]
@@ -84,19 +85,21 @@ async def _get_mcp_tools():
             await client.aclose()
         elif hasattr(client,"close") and callable(client.close):
             client.close()
-        if not tools: raise RuntimeError("Tool server returned empty list")
-        _tools_cache[MCP_SERVER_URL]=tools
+        if not tools:
+            raise RuntimeError("Tool server returned empty list")
+        _tools_cache[MCP_SERVER_URL] = tools
         return tools
 
-async def _call_tool(name:str, **kwargs):
+async def _call_tool(name: str, **kwargs):
     try:
-        tool = next(t for t in await _get_mcp_tools() if t.name==name)
+        tool = next(t for t in await _get_mcp_tools() if t.name == name)
         res  = await tool.ainvoke(kwargs)
-        logger.info("Tool %s → %s", name, res[:200]+"…" if isinstance(res,str) else res)
-        return {"success":True,"result":res}
+        logger.info("Tool %s → %s", name,
+                    res[:200] + "…" if isinstance(res, str) else res)
+        return {"success": True, "result": res}
     except Exception as e:
         logger.exception("Tool call failed")
-        return {"success":False,"error":str(e)}
+        return {"success": False, "error": str(e)}
 
 # ──────────────── nodes ────────────────
 LLM_TEMPLATE = """
@@ -111,119 +114,223 @@ Format instructions:
 {format_instructions}
 """.strip()
 
-async def geocode_address_node(state:GraphState)->GraphState:
+async def geocode_address_node(state: GraphState) -> GraphState:
     user_msg = state["user_messages"][-1].content.strip()
-    if not user_msg or "," not in user_msg:
-        return {"ai_messages":[AIMessage(content="Could you give me the full service address?")],
-                "progress":state.get("progress","start")}
+
+    # ── no comma ⇒ almost certainly not a full street address
+    if not user_msg:
+        return {
+            "ai_messages": [AIMessage(
+                content="Could you give me the full service address?")],
+            "progress": "awaiting_address"
+        }
+
     parser = JsonOutputParser(pydantic_object=GeocodersRequest)
     prompt = PromptTemplate.from_template(
         LLM_TEMPLATE,
-        partial_variables={"format_instructions":parser.get_format_instructions()}
+        partial_variables={"format_instructions": parser.get_format_instructions()}
     )
-    params = await (prompt | llm | parser).ainvoke({"address":user_msg})
+    params = await (prompt | llm | parser).ainvoke({"address": user_msg})
+
     if not params.get("query"):
-        return {"ai_messages":[AIMessage(content="I didn't catch the address—could you repeat it?")],
-                "progress":state.get("progress","start")}
+        return {
+            "ai_messages": [AIMessage(
+                content="I didn't catch the address—could you repeat it?")],
+            "progress": "awaiting_address"
+        }
+
     res = await _call_tool("ispApi__getGeocoders",
                            query=params["query"],
-                           **{"Content-Type":"application/json","Authorization":"Bearer token"})
-    if res["success"]:
-        return {"progress":"address_verified",
-                "verified_address_details":json.loads(res["result"])}
-    return {"progress":"end",
-            "ai_messages":[AIMessage(content=f"Sorry, address verification failed ({res['error']}).")]}
+                           **{"Content-Type": "application/json",
+                              "Authorization": "Bearer token"})
 
-async def check_eligibility_node(state:GraphState)->GraphState:
-    data = state.get("verified_address_details",{})
+    if res["success"]:
+        return {
+            "progress": "address_verified",
+            "verified_address_details": json.loads(res["result"])
+        }
+
+    return {
+        "progress": "end",
+        "ai_messages": [AIMessage(
+            content=f"Sorry, address verification failed ({res['error']}).")]
+    }
+
+async def check_eligibility_node(state: GraphState) -> GraphState:
+    data = state.get("verified_address_details", {})
     if not data.get("geocoders"):
-        return {"progress":"end","ai_messages":[AIMessage(content="Address verification failed.")]}
+        return {
+            "progress": "end",
+            "ai_messages": [AIMessage(content="Address verification failed.")]
+        }
 
     g      = data["geocoders"][0]
     meta   = g["meta"]
-    coords = {k:str(v) for k,v in g["center"].items()}
+    coords = {k: str(v) for k, v in g["center"].items()}
 
-    res = await _call_tool("ispApi__checkEligibility",
-                           address=g["address"], city=meta["city"], state=meta["state"],
-                           street1=meta["street1"], street2=meta.get("street2",""),
-                           zipCode=meta["zipCode"], locationKey=meta["locationKey"],
-                           fiberLocationKey=meta["fiber"]["fiberLocationKey"],
-                           coordinates=coords,
-                           **{"Authorization":"Bearer token","Content-Type":"application/json"})
+    res = await _call_tool(
+        "ispApi__checkEligibility",
+        address=g["address"],
+        city=meta["city"],
+        state=meta["state"],
+        street1=meta["street1"],
+        street2=meta.get("street2", ""),
+        zipCode=meta["zipCode"],
+        locationKey=meta["locationKey"],
+        fiberLocationKey=meta["fiber"]["fiberLocationKey"],
+        coordinates=coords,
+        **{"Authorization": "Bearer token",
+           "Content-Type": "application/json"}
+    )
     if not res["success"]:
-        return {"progress":"end","ai_messages":[AIMessage(content=res["error"])]}
-    if json.loads(res["result"])["status"]!="eligible":
-        return Command(update={"ai_messages":[AIMessage(content="Unfortunately that address is not eligible.")]},
-                       goto=END)
-    return {"progress":"eligibility_checked","eligibility_response":res["result"]}
+        return {
+            "progress": "end",
+            "ai_messages": [AIMessage(content=res["error"])]
+        }
 
-def router_node(state:GraphState):
+    if json.loads(res["result"])["status"] != "eligible":
+        return Command(
+            update={"ai_messages": [AIMessage(
+                content="Unfortunately that address is not eligible.")]},
+            goto=END
+        )
+    return {
+        "progress": "eligibility_checked",
+        "eligibility_response": res["result"]
+    }
+
+# ───────── router (replace old function) ─────────
+def router_node(state: GraphState):
     """Pure routing – no external calls."""
-    last      = state["user_messages"][-1].content.strip()
-    plan_ids  = {p["id"] for p in state.get("available_plans",[])}
+    last = state["user_messages"][-1].content.strip()
+    plan_ids = {p["id"] for p in state.get("available_plans", [])}
 
+    # user clicked a plan
     if last in plan_ids:
-        # safe log (thread id if provided via config, else 'n/a')
         thread_id = state.get("__run_id__", "n/a")
         logger.info("plan_selected=%s  thread=%s", last, thread_id)
-        return Command(update={"selected_plan_id":last,"progress":"plan_selected"},
-                       goto="add_plan_to_cart")
+        return Command(
+            update={"selected_plan_id": last, "progress": "plan_selected"},
+            goto="add_plan_to_cart",
+        )
 
-    prog = state.get("progress","start")
+    prog = state.get("progress", "start")
+
+    # special case: we’re waiting for an address
+    if prog == "awaiting_address":
+        # if the NEW user message looks like a street address, parse it
+        if "," in last:
+            return Command(goto="geocode_address")
+        # otherwise end this turn (no loop)
+        return Command(goto=END)
+
+    # normal flow
     return Command(goto={
         "start"              : "geocode_address",
         "address_verified"   : "check_eligibility",
-        "eligibility_checked": "list_plans"
+        "eligibility_checked": "list_plans",
     }.get(prog, END))
 
-async def list_plans_node(state:GraphState)->GraphState:
+
+async def list_plans_node(state: GraphState) -> GraphState:
     elig = json.loads(state["eligibility_response"])
-    tags = [t for t in elig["hintEligibleCategories"] if t.lower() not in ("capped","nomad")]
+    tags = [t for t in elig["hintEligibleCategories"]
+            if t.lower() not in ("capped", "nomad")]
     geo  = elig.get("geoSegments") or ["nationwide"]
 
-    res = await _call_tool("plans__GetBroadbandPlans",
-                           transactionType="ACTIVATION", planType="ISP",
-                           requestedLineNumber=1, accountSubtype="INDIVIDUAL_REGULAR",
-                           productSubCategories=["Home Internet"], planTags=tags,
-                           geoSegments=geo, applyDiscount=True, includePromotions=True,
-                           **{"Authorization":"Bearer token","Content-Type":"application/json"})
+    res = await _call_tool(
+        "plans__GetBroadbandPlans",
+        transactionType="ACTIVATION",
+        planType="ISP",
+        requestedLineNumber=1,
+        accountSubtype="INDIVIDUAL_REGULAR",
+        productSubCategories=["Home Internet"],
+        planTags=tags,
+        geoSegments=geo,
+        applyDiscount=True,
+        includePromotions=True,
+        **{"Authorization": "Bearer token",
+           "Content-Type": "application/json"}
+    )
     if not res["success"]:
-        return {"progress":"end","ai_messages":[AIMessage(content=res["error"])]}
+        return {
+            "progress": "end",
+            "ai_messages": [AIMessage(content=res["error"])]
+        }
 
     plans = json.loads(res["result"])["plans"]
-    brief = [{"id":p["offerFamilyId"],
-              "name":p.get("displayName") or p.get("name") or p.get("planName"),
-              "price":p["price"]["cartPlanPrice"]["monthlyPrice"]["salePrice"]["amount"]} for p in plans]
-    return {"progress":"plans_presented","available_plans":brief,"plans_metadata":plans}
+    brief = [{
+        "id":    p["offerFamilyId"],
+        "name":  p.get("displayName")
+                 or p.get("name")
+                 or p.get("planName"),
+        "price": p["price"]["cartPlanPrice"]["monthlyPrice"]
+                 ["salePrice"]["amount"]
+    } for p in plans]
 
-async def add_plan_to_cart_node(state:GraphState)->GraphState:
+    return {
+        "progress": "plans_presented",
+        "available_plans": brief,
+        "plans_metadata": plans
+    }
+
+async def add_plan_to_cart_node(state: GraphState) -> GraphState:
     token = os.getenv("CART_SESSION_ID")
     if not token:
-        return {"progress":"end","ai_messages":[AIMessage(content="Cart token missing")]}
+        return {
+            "progress": "end",
+            "ai_messages": [AIMessage(content="Cart token missing")]
+        }
 
-    cart = await _call_tool("cart__GetCart", cartId="", token=token,
-                            **{"Authorization":"Bearer token","Content-Type":"application/json"})
+    cart = await _call_tool(
+        "cart__GetCart",
+        cartId="",
+        token=token,
+        **{"Authorization": "Bearer token",
+           "Content-Type": "application/json"}
+    )
     if not cart["success"]:
-        return {"progress":"end","ai_messages":[AIMessage(content=cart["error"])]}
+        return {
+            "progress": "end",
+            "ai_messages": [AIMessage(content=cart["error"])]
+        }
     cart_id = json.loads(cart["result"])["cart"]["cartId"]
 
     elig = json.loads(state["eligibility_response"])
-    add  = await _call_tool("cart__AddToCart",
-                            cartId=cart_id, eligibilityId=elig["eligibilityId"],
-                            category="premium,unlimited", deleteLines=True,
-                            isAccessory=False, lineType="ISP", transactionType="ACTIVATION",
-                            fulfillment=[{"auditKey":"FULFILLMENTTYPE","auditValue":"SHIP-TO"}],
-                            **{"Authorization":"Bearer token","Content-Type":"application/json"})
+    add  = await _call_tool(
+        "cart__AddToCart",
+        cartId=cart_id,
+        eligibilityId=elig["eligibilityId"],
+        category="premium,unlimited",
+        deleteLines=True,
+        isAccessory=False,
+        lineType="ISP",
+        transactionType="ACTIVATION",
+        fulfillment=[{"auditKey": "FULFILLMENTTYPE",
+                      "auditValue": "SHIP-TO"}],
+        **{"Authorization": "Bearer token",
+           "Content-Type": "application/json"}
+    )
     if not add["success"]:
-        return {"progress":"end","ai_messages":[AIMessage(content=add["error"])]}
+        return {
+            "progress": "end",
+            "ai_messages": [AIMessage(content=add["error"])]
+        }
     line_id = json.loads(add["result"])["cart"]["lines"][0]["id"]
 
-    upd = await _call_tool("cart__UpdatePlans",
-                           cartId=cart_id, lineId=line_id,
-                           offerFamilyId=state["selected_plan_id"],
-                           **{"Authorization":"Bearer token","Content-Type":"application/json"})
+    upd = await _call_tool(
+        "cart__UpdatePlans",
+        cartId=cart_id,
+        lineId=line_id,
+        offerFamilyId=state["selected_plan_id"],
+        **{"Authorization": "Bearer token",
+           "Content-Type": "application/json"}
+    )
     if not upd["success"]:
-        return {"progress":"end","ai_messages":[AIMessage(content=upd["error"])]}
+        return {
+            "progress": "end",
+            "ai_messages": [AIMessage(content=upd["error"])]
+        }
 
     review_url = f"https://www.t-mobile.com/buy/cart?cartId={cart_id}"
     return {
@@ -242,9 +349,10 @@ wf.add_node("geocode_address", geocode_address_node)
 wf.add_node("check_eligibility", check_eligibility_node)
 wf.add_node("list_plans", list_plans_node)
 wf.add_node("add_plan_to_cart", add_plan_to_cart_node)
+wf.add_edge("router", END) 
 
 wf.add_edge(START, "router")
-for n in ("geocode_address","check_eligibility","list_plans"):
+for n in ("geocode_address", "check_eligibility", "list_plans"):
     wf.add_edge(n, "router")
 wf.add_edge("add_plan_to_cart", END)
 
