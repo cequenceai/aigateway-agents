@@ -18,6 +18,12 @@ from langgraph.graph.message import add_messages
 from langgraph.types import Command
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import BaseModel, Field
+from rich.console import Console
+import copy
+import httpx, time
+
+console = Console()
+
 
 ADDRESS_HINT = re.compile(r'\d+\s+\w+', re.IGNORECASE)
 
@@ -26,6 +32,29 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s  %(levelname)s  %(name)s  %(message)s")
 logger = logging.getLogger("tmobile_workflow")
+
+MASK_SECRETS = os.getenv("MASK_SECRETS", "false").lower() == "true"      # default = NO masking
+SENSITIVE_FIELDS = {"Authorization", "token", "access_token", "password", "pwd"}
+PREFIX_REQ = "[MCP-REQUEST]"     
+PREFIX_RES = "[MCP-RESPONSE]"
+
+def _scrub(data: dict, max_len=4000) -> str:
+    if not MASK_SECRETS:                     # LOCAL ⇒ just log everything
+        txt = json.dumps(data, default=str)
+        return (txt[:max_len] + "…") if len(txt) > max_len else txt
+
+    safe = copy.deepcopy(data)               # PROD ⇒ mask tokens
+    for k in safe:
+        if k in SENSITIVE_FIELDS and isinstance(safe[k], str):
+            safe[k] = safe[k][:6] + "…redacted…"
+    txt = json.dumps(safe, default=str)
+    return (txt[:max_len] + "…") if len(txt) > max_len else txt
+
+
+def _pretty(obj, indent=2):
+    txt = json.dumps(obj, indent=indent, default=str, ensure_ascii=False)
+    console.print_json(txt)
+    return ""
 
 MCP_SERVER_URL  = os.getenv("MCP_SERVER_URL")
 MCP_AUTH_HEADER = os.getenv("MCP_AUTH_HEADER", "")
@@ -95,9 +124,11 @@ async def _get_mcp_tools():
 async def _call_tool(name:str, **kwargs):
     try:
         tool = next(t for t in await _get_mcp_tools() if t.name==name)
-        res  = await tool.ainvoke(kwargs)
-        logger.info("Tool %s → %s", name, res[:200]+"…" if isinstance(res,str) else res)
-        return {"success":True,"result":res}
+        logger.info("%s %-20s\n%s", PREFIX_REQ, name, _pretty(kwargs))
+        raw  = await tool.ainvoke(kwargs)
+        body = json.loads(raw) if isinstance(raw, str) else raw
+        logger.info("%s %-20s\n%s", PREFIX_RES, name, _pretty(body))
+        return {"success":True,"result":raw}
     except Exception as e:
         logger.exception("Tool call failed")
         return {"success":False,"error":str(e)}
@@ -222,44 +253,83 @@ async def list_plans_node(state:GraphState)->GraphState:
               "price":p["price"]["cartPlanPrice"]["monthlyPrice"]["salePrice"]["amount"]} for p in plans]
     return {"progress":"plans_presented","available_plans":brief,"plans_metadata":plans}
 
-async def add_plan_to_cart_node(state:GraphState)->GraphState:
+async def add_plan_to_cart_node(state: GraphState) -> GraphState:
     token = os.getenv("CART_SESSION_ID")
     if not token:
-        return {"progress":"end","ai_messages":[AIMessage(content="Cart token missing")]}
+        return {"progress": "end",
+                "ai_messages": [AIMessage(content="Cart token missing")]}
 
-    cart = await _call_tool("cart__GetCart", cartId="", token=token,
-                            **{"Authorization":"Bearer token","Content-Type":"application/json"})
+    cart = await _call_tool("cart__GetCart",
+                            cartId="",
+                            token=token,
+                            **{"Authorization": "Bearer token",
+                               "Content-Type": "application/json"})
     if not cart["success"]:
-        return {"progress":"end","ai_messages":[AIMessage(content=cart["error"])]}
-    cart_id = json.loads(cart["result"])["cart"]["cartId"]
+        return {"progress": "end",
+                "ai_messages": [AIMessage(content=cart["error"])]}
 
-    elig = json.loads(state["eligibility_response"])
-    add  = await _call_tool("cart__AddToCart",
-                            cartId=cart_id, eligibilityId=elig["eligibilityId"],
-                            category="premium,unlimited", deleteLines=True,
-                            isAccessory=False, lineType="ISP", transactionType="ACTIVATION",
-                            fulfillment=[{"auditKey":"FULFILLMENTTYPE","auditValue":"SHIP-TO"}],
-                            **{"Authorization":"Bearer token","Content-Type":"application/json"})
+    cart_json = json.loads(cart["result"])
+    cart_id   = cart_json["cart"]["cartId"]
+
+    # ── pick the plan that the user clicked ────────────────────────────────
+    chosen     = next(p for p in state["plans_metadata"]
+                      if p["offerFamilyId"] == state["selected_plan_id"])
+    plan_tag   = chosen["planTag"]                       #  ← "premium" or "unlimited"
+    logger.info("Using plan_tag=%s", plan_tag)           #  ← log it for sanity check
+    rate_plan_soc = chosen["price"]["linePlanPrice"][0]["ratePlanSoc"]
+    plan_id       = chosen["ratePlanOfferCompositeId"]
+
+    elig  = json.loads(state["eligibility_response"])
+
+    # ── Add a blank ISP line (creates bucket) ──────────────────────────────
+    add = await _call_tool("cart__AddToCart",
+        cartId=cart_id,
+        eligibilityId=elig["eligibilityId"],
+        category=plan_tag,               #  ← use the SAME tag
+        deleteLines=True,
+        isAccessory=False,
+        lineType="ISP",
+        transactionType="ACTIVATION",
+        fulfillment=[{"auditKey": "FULFILLMENTTYPE",
+                      "auditValue": "SHIP-TO"}],
+        **{"Authorization": "Bearer token",
+           "Content-Type": "application/json"})
     if not add["success"]:
-        return {"progress":"end","ai_messages":[AIMessage(content=add["error"])]}
+        return {"progress": "end",
+                "ai_messages": [AIMessage(content=add["error"])]}
+
     line_id = json.loads(add["result"])["cart"]["lines"][0]["id"]
 
+    # ── Replace the placeholder plan with the real one ─────────────────────
     upd = await _call_tool("cart__UpdatePlans",
-                           cartId=cart_id, lineId=line_id,
-                           offerFamilyId=state["selected_plan_id"],
-                           **{"Authorization":"Bearer token","Content-Type":"application/json"})
+        cartId=cart_id,
+        lineId=line_id,
+        category=plan_tag,               #  ← same tag again
+        ratePlanSoc=rate_plan_soc,
+        #planId="gfsggm3fha3dsljxgvtgcljuguydkljzmrsgcljygrrdqobxgq2dmzbtga=",
+        addDeviceImplicitly=True,
+        deleteOldPlan=False,
+        offerFamilyId=state["selected_plan_id"],
+        **{"Authorization": "Bearer token",
+           "Content-Type": "application/json"})
     if not upd["success"]:
-        return {"progress":"end","ai_messages":[AIMessage(content=upd["error"])]}
+        return {"progress": "end",
+                "ai_messages": [AIMessage(content=upd["error"])]}
 
-    review_url = f"https://www.t-mobile.com/buy/cart?cartId={cart_id}"
+    # optional: pull extCartId for the customer-facing URL
+    ext_cart_id = cart_json.get("extCartId", cart_id)
+    review_url  = f"https://www.t-mobile.com/buy/cart?cartID={ext_cart_id}"
+
+
     return {
-        "progress"       : "plan_selected",
-        "cart_id"        : cart_id,
-        "line_id"        : line_id,
+        "progress": "plan_selected",
+        "cart_id": cart_id,
+        "line_id": line_id,
         "review_cart_url": review_url,
         "available_plans": None,
-        "ai_messages"    : [AIMessage(content="✓ Plan added!")]
+        "ai_messages": [AIMessage(content="✓ Plan added!")]
     }
+
 
 # ──────────────── wire graph ────────────────
 wf = StateGraph(GraphState)
