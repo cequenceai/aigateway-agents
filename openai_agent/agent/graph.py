@@ -22,7 +22,7 @@ class AgentConfig:
     auth_header: Optional[str] = None
     oauth_provider: Optional[OAuthClientProvider] = None
     storage = None  # TokenStorage type
-    instructions: str = "You are a helpful assistant with access to Slack tools. Use the available tools to help users interact with Slack."
+    instructions: str = "You are a helpful assistant with access to MCP server tools. Use the available tools to help users accomplish their tasks."
 
 
 async def create_agent(config: AgentConfig) -> tuple[Agent, MCPServerStreamableHttp]:
