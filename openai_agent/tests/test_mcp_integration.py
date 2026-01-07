@@ -123,14 +123,14 @@ async def test_mcp_tool_usage(api_key):
         
         agent = Agent(
             name="Test Agent",
-            instructions="You are a helpful assistant with access to Slack tools.",
+            instructions="You are a helpful assistant with access to MCP server tools.",
             mcp_servers=[mcp_server]
         )
         
         # Try to use a tool
         result = await Runner.run(
             agent,
-            "Use the conversationsList tool to list available Slack conversations. Show me the first 3."
+            "Use the available tools from the MCP server to demonstrate functionality. List the first 3 items you can access."
         )
         
         assert result is not None
