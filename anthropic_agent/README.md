@@ -59,9 +59,9 @@ import os
 os.environ["ANTHROPIC_API_KEY"] = "your-api-key-here"
 ```
 
-## Testing with Slack MCP Server
+## Testing with MCP Server
 
-To test with a remote Slack MCP server:
+To test with any MCP server (Slack is used as an example):
 
 ```bash
 # Test with OAuth (default - will open browser for authentication)
@@ -78,7 +78,7 @@ The test script will:
 1. Set up OAuth authentication (if needed)
 2. Connect to the MCP server
 3. List available tools
-4. Test using Slack MCP tools (conversationsList, searchMessages, etc.)
+4. Test using MCP server tools (tool names depend on the specific MCP server)
 
 See `QUICK_START.md` for detailed instructions.
 

@@ -48,11 +48,11 @@ mcp_server = MCPServerStreamableHttp(
 
 agent = Agent(
     name="Assistant",
-    instructions="You are a helpful assistant with access to Slack tools.",
+    instructions="You are a helpful assistant with access to MCP server tools.",
     mcp_servers=[mcp_server]
 )
 
-result = await Runner.run(agent, "List available Slack channels")
+result = await Runner.run(agent, "List available tools from the MCP server")
 print(result.final_output)
 ```
 
