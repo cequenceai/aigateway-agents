@@ -135,8 +135,7 @@ class AgentRunner:
                 options = ClaudeAgentOptions(
                     mcp_servers=mcp_servers,
                     permission_mode="bypassPermissions",
-                    env={"ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY")},
-                    system="When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'"
+                    env={"ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY")}
                 )
                 step.finish()
                 
