@@ -156,22 +156,15 @@ class AgentRunner:
                 
                 self._update_progress("Anthropic Agent", "Interpreting and executing task...")
                 output_parts = []
-                message_count = 0
                 async for message in query(prompt=interpreted_task, options=options):
                     if hasattr(message, 'content'):
                         for block in message.content:
                             if hasattr(block, 'text'):
                                 output_parts.append(block.text)
-                                message_count += 1
-                                # Allow interactive prompting every 5 messages
-                                if self.interactive_prompt and message_count % 5 == 0:
-                                    try:
-                                        user_input = self.interactive_prompt("Agent is working... Enter additional instruction (or press Enter to continue): ")
-                                        if user_input and user_input.strip():
-                                            # Add user input to the conversation
-                                            interpreted_task += f"\n\nUser additional instruction: {user_input.strip()}"
-                                    except (EOFError, KeyboardInterrupt):
-                                        pass  # Continue execution if no input available
+                                # Show progress in real-time
+                                if len(output_parts) > 0:
+                                    last_output = output_parts[-1][:100] if len(output_parts[-1]) > 100 else output_parts[-1]
+                                    self._update_progress("Anthropic Agent", f"Working... ({len(output_parts)} messages)")
                 step.finish()
                 
                 execution_time = (datetime.now() - start_time).total_seconds()
@@ -481,20 +474,37 @@ class AgentRunner:
     async def run_agents(self, task: str, selected_agents: List[str]) -> List[AgentResult]:
         """Run task across selected agents."""
         results = []
+        current_task = task
         
         # Run agents sequentially for better progress visibility
         if "anthropic" in selected_agents:
-            result = await self.run_anthropic_agent(task)
+            result = await self.run_anthropic_agent(current_task)
             results.append(result)
             self._update_progress("Anthropic Agent", "✅ Complete" if result.success else "❌ Failed")
+            # Allow user to provide additional instructions between agents
+            if self.interactive_prompt and len(selected_agents) > 1:
+                try:
+                    additional = self.interactive_prompt("\n[dim]Agent finished. Add instruction for next agent? (Enter to skip): [/dim]")
+                    if additional and additional.strip():
+                        current_task = f"{current_task}\n\nAdditional user instruction: {additional.strip()}"
+                except (EOFError, KeyboardInterrupt):
+                    pass
         
         if "langchain" in selected_agents:
-            result = await self.run_langchain_agent(task)
+            result = await self.run_langchain_agent(current_task)
             results.append(result)
             self._update_progress("Langchain Agent", "✅ Complete" if result.success else "❌ Failed")
+            # Allow user to provide additional instructions between agents
+            if self.interactive_prompt and "openai" in selected_agents:
+                try:
+                    additional = self.interactive_prompt("\n[dim]Agent finished. Add instruction for next agent? (Enter to skip): [/dim]")
+                    if additional and additional.strip():
+                        current_task = f"{current_task}\n\nAdditional user instruction: {additional.strip()}"
+                except (EOFError, KeyboardInterrupt):
+                    pass
         
         if "openai" in selected_agents:
-            result = await self.run_openai_agent(task)
+            result = await self.run_openai_agent(current_task)
             results.append(result)
             self._update_progress("OpenAI Agent", "✅ Complete" if result.success else "❌ Failed")
         
@@ -814,7 +824,23 @@ async def main():
         timestamp = datetime.now().strftime('%H:%M:%S')
         console.print(f"[dim][{timestamp}][/dim] [cyan]{agent_name}:[/cyan] {status}")
     
-    runner = AgentRunner(mcp_url=args.mcp_url, auth_header=args.auth_header, progress_callback=update_progress)
+    # Create interactive prompt function if in interactive mode
+    interactive_prompt_fn = None
+    if is_interactive() and not args.no_interactive:
+        def get_user_input(prompt_text: str) -> str:
+            """Get user input during agent execution."""
+            try:
+                return console.input(f"[yellow]{prompt_text}[/yellow]")
+            except (EOFError, KeyboardInterrupt):
+                return ""
+        interactive_prompt_fn = get_user_input
+    
+    runner = AgentRunner(
+        mcp_url=args.mcp_url, 
+        auth_header=args.auth_header, 
+        progress_callback=update_progress,
+        interactive_prompt=interactive_prompt_fn
+    )
     
     console.print()
     console.print("[bold]Running agents sequentially...[/bold]")
