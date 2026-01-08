@@ -398,12 +398,24 @@ class AgentRunner:
                 
                 await mcp_server.cleanup()
                 
+                # Calculate KPIs
+                output_lower = output.lower()
+                tool_calls_count = output.count("tool") + output.count("mcp")
+                message_sent = "message" in output_lower and ("sent" in output_lower or "posted" in output_lower or "delivered" in output_lower)
+                target_reached = self.mcp_url in output or "channel" in output_lower or "dm" in output_lower
+                safety_followed = "public" not in output_lower and "general" not in output_lower
+                
                 return AgentResult(
                     agent_name="OpenAI Agent",
                     success=True,
                     output=output,
                     execution_time=execution_time,
-                    timing_steps=timing_steps
+                    timing_steps=timing_steps,
+                    tool_calls_count=tool_calls_count,
+                    tool_calls_successful=tool_calls_count if message_sent else 0,
+                    message_sent=message_sent,
+                    target_reached=target_reached,
+                    safety_constraints_followed=safety_followed
                 )
             finally:
                 callback_server.stop()
