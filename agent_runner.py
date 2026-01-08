@@ -319,7 +319,10 @@ After requesting clarification, wait for the user's response, then proceed with 
                 output="",
                 error=str(e),
                 execution_time=execution_time,
-                timing_steps=timing_steps
+                timing_steps=timing_steps,
+                message_failure_reason=f"Agent execution failed: {str(e)}",
+                target_failure_reason="Agent execution failed before target could be reached.",
+                tool_failure_details=[f"Execution error: {str(e)}"]
             )
     
     async def run_langchain_agent(self, task: str) -> AgentResult:
