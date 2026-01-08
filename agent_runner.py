@@ -150,10 +150,12 @@ Before executing, determine:
 2. What tools would be needed to complete this task?
 3. If the task cannot be completed, clearly state why before attempting to query the server.
 
-IMPORTANT: If this task involves sending a message (DM, channel message, etc.):
-- You MUST prefix the message with "Anthropic Agent: " to identify which agent sent it
-- You MUST actually execute the task - find the user, send the message, don't just explain what you would do
-- Use usersList tool to find the user, then use chatPostMessage to send the message
+IMPORTANT: 
+- You MUST actually execute the task using the available MCP tools - do not just describe what you would do
+- You MUST call the appropriate MCP tools to complete the task
+- You MUST verify the task was completed successfully by checking the tool response
+- If you need to identify yourself in any output, prefix it with "Anthropic Agent: "
+- Do not report success unless you actually received a successful response from the MCP tool(s)
 
 If the task is completable, proceed with execution. If not, explain why it cannot be completed.
 
@@ -268,10 +270,12 @@ Before executing, determine:
 2. What tools would be needed to complete this task?
 3. If the task cannot be completed, clearly state why before attempting to query the server.
 
-IMPORTANT: If this task involves sending a message (DM, channel message, etc.):
-- You MUST prefix the message with "Langchain Agent: " to identify which agent sent it
-- You MUST actually execute the task - find the user, send the message, don't just explain what you would do
-- Use usersList tool to find the user, then use chatPostMessage to send the message
+IMPORTANT:
+- You MUST actually execute the task using the available MCP tools - do not just describe what you would do
+- You MUST call the appropriate MCP tools to complete the task
+- You MUST verify the task was completed successfully by checking the tool response
+- If you need to identify yourself in any output, prefix it with "Langchain Agent: "
+- Do not report success unless you actually received a successful response from the MCP tool(s)
 
 If the task is completable, proceed with execution. If not, explain why it cannot be completed.
 
@@ -400,7 +404,7 @@ Task: {task}"""
                 timing_steps.append(step)
                 self._update_progress("OpenAI Agent", "Initializing OpenAI Agent...")
                 
-                model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+                model = os.environ.get("OPENAI_MODEL", "gpt-4o")
                 agent = Agent(
                     name="OpenAI Agent",
                     instructions="""You are a helpful assistant with access to MCP server tools. 
@@ -430,11 +434,12 @@ Before executing, determine:
 2. What tools would be needed to complete this task?
 3. If the task cannot be completed, clearly state why before attempting to query the server.
 
-IMPORTANT: If this task involves sending a message (DM, channel message, etc.):
-- You MUST prefix the message with "OpenAI Agent: " to identify which agent sent it
-- You MUST actually execute the task - find the user using usersList, then send the message using chatPostMessage
-- If you can't find the exact name, search for similar names (e.g., "Abhinav" or "Allam") and use the closest match
-- Don't just explain what you would do - actually send the message
+IMPORTANT:
+- You MUST actually execute the task using the available MCP tools - do not just describe what you would do
+- You MUST call the appropriate MCP tools to complete the task
+- You MUST verify the task was completed successfully by checking the tool response
+- If you need to identify yourself in any output, prefix it with "OpenAI Agent: "
+- Do not report success unless you actually received a successful response from the MCP tool(s)
 
 If the task is completable, proceed with execution. If not, explain why it cannot be completed.
 
@@ -695,7 +700,7 @@ async def main():
     else:
         # Always try interactive mode - let it fail gracefully if not available
         console.print("[bold]Enter the task for the agents:[/bold]")
-        console.print("[dim]Example: 'Tell me your favorite color by dming me Abhinav Allam'[/dim]")
+        console.print("[dim]Example: 'List all available tools from the MCP server'[/dim]")
         console.print()
         try:
             task = console.input("[bold cyan]Task: [/bold cyan]")
