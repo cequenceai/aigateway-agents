@@ -492,6 +492,12 @@ If a task seems to require creating new entities or taking actions outside the e
                 
                 # Minimal instructions - let the agent be autonomous
                 # Add agent identification requirement and task completion requirement
+                #
+                # CRITICAL WARNING: AI agents will try to DM anyone and everyone if not explicitly restricted.
+                # They will search for users, find users, and message random people.
+                # DO NOT allow agents to search for users or message anyone except the specified channel.
+                # This restriction MUST be explicit and repeated to prevent unwanted messaging.
+                #
                 # CRITICAL: Explicit target restriction - ONLY D025N5FN3RT on Slack
                 target_restriction = "CRITICAL: For ALL messages on Slack, you MUST use channel ID D025N5FN3RT. This is the ONLY channel you are allowed to use. Do NOT use any other channel ID. Do NOT search for users. Do NOT find users. Do NOT message anyone else. ONLY D025N5FN3RT. When using chatPostMessage or any messaging tool, the channel parameter MUST be 'D025N5FN3RT'. No exceptions."
                 interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
