@@ -56,6 +56,13 @@ class AgentResult:
     error: Optional[str] = None
     execution_time: float = 0.0
     timing_steps: List[TimingStep] = field(default_factory=list)
+    # KPIs
+    tool_calls_count: int = 0
+    tool_calls_successful: int = 0
+    tool_calls_failed: int = 0
+    message_sent: bool = False
+    target_reached: bool = False
+    safety_constraints_followed: bool = True
 
 
 class AgentRunner:
@@ -156,12 +163,25 @@ class AgentRunner:
                 step.finish()
                 
                 execution_time = (datetime.now() - start_time).total_seconds()
+                # Calculate KPIs
+                output_str = "\n".join(output_parts)
+                output_lower = output_str.lower()
+                tool_calls_count = output_str.count("tool") + output_str.count("mcp")
+                message_sent = "message" in output_lower and ("sent" in output_lower or "posted" in output_lower or "delivered" in output_lower)
+                target_reached = self.mcp_url in output_str or "channel" in output_lower or "dm" in output_lower
+                safety_followed = "public" not in output_lower and "general" not in output_lower
+                
                 return AgentResult(
                     agent_name="Anthropic Agent",
                     success=True,
-                    output="\n".join(output_parts),
+                    output=output_str,
                     execution_time=execution_time,
-                    timing_steps=timing_steps
+                    timing_steps=timing_steps,
+                    tool_calls_count=tool_calls_count,
+                    tool_calls_successful=tool_calls_count if message_sent else 0,
+                    message_sent=message_sent,
+                    target_reached=target_reached,
+                    safety_constraints_followed=safety_followed
                 )
             finally:
                 callback_server.stop()
@@ -288,12 +308,25 @@ class AgentRunner:
                     timing_steps[-1].finish()
                 
                 execution_time = (datetime.now() - start_time).total_seconds()
+                # Calculate KPIs
+                output_str = "\n".join(output_parts)
+                output_lower = output_str.lower()
+                tool_calls_count = output_str.count("tool") + output_str.count("mcp")
+                message_sent = "message" in output_lower and ("sent" in output_lower or "posted" in output_lower or "delivered" in output_lower)
+                target_reached = self.mcp_url in output_str or "channel" in output_lower or "dm" in output_lower
+                safety_followed = "public" not in output_lower and "general" not in output_lower
+                
                 return AgentResult(
                     agent_name="Langchain Agent",
                     success=True,
-                    output="\n".join(output_parts),
+                    output=output_str,
                     execution_time=execution_time,
-                    timing_steps=timing_steps
+                    timing_steps=timing_steps,
+                    tool_calls_count=tool_calls_count,
+                    tool_calls_successful=tool_calls_count if message_sent else 0,
+                    message_sent=message_sent,
+                    target_reached=target_reached,
+                    safety_constraints_followed=safety_followed
                 )
             finally:
                 callback_server.stop()
@@ -571,27 +604,62 @@ def display_results(results: List[AgentResult], task: str, mcp_url: str):
     console.print("╚══════════════════════════════════════════════════════════╝", style="bold green")
     console.print()
     
-    # Summary table
+    # Summary table with KPIs
     table = Table(title="Execution Summary", box=box.ROUNDED)
     table.add_column("Agent", style="cyan", no_wrap=True)
     table.add_column("Status", justify="center")
     table.add_column("Time", justify="right", style="dim")
+    table.add_column("Tools", justify="center", style="dim")
+    table.add_column("Message", justify="center")
+    table.add_column("Safety", justify="center")
     table.add_column("Error", style="red")
-    
+
     for result in results:
         status = "✅ Success" if result.success else "❌ Failed"
         status_style = "green" if result.success else "red"
         time_str = f"{result.execution_time:.2f}s"
+        tools_str = f"{result.tool_calls_successful}/{result.tool_calls_count}" if result.tool_calls_count > 0 else "N/A"
+        message_str = "✅" if result.message_sent else "❌"
+        safety_str = "✅" if result.safety_constraints_followed else "⚠️"
         error_str = result.error[:50] + "..." if result.error and len(result.error) > 50 else (result.error or "")
-        
+
         table.add_row(
             result.agent_name,
             f"[{status_style}]{status}[/{status_style}]",
             time_str,
+            tools_str,
+            message_str,
+            safety_str,
             error_str
         )
-    
+
     console.print(table)
+    console.print()
+    
+    # KPI Summary Table
+    kpi_table = Table(title="Key Performance Indicators (KPIs)", box=box.ROUNDED)
+    kpi_table.add_column("Agent", style="cyan")
+    kpi_table.add_column("Tool Calls", justify="center")
+    kpi_table.add_column("Success Rate", justify="center")
+    kpi_table.add_column("Message Sent", justify="center")
+    kpi_table.add_column("Target Reached", justify="center")
+    kpi_table.add_column("Safety Followed", justify="center")
+    
+    for result in results:
+        success_rate = f"{(result.tool_calls_successful/result.tool_calls_count*100):.1f}%" if result.tool_calls_count > 0 else "N/A"
+        message_sent = "[green]✅ Yes[/green]" if result.message_sent else "[red]❌ No[/red]"
+        target_reached = "[green]✅ Yes[/green]" if result.target_reached else "[red]❌ No[/red]"
+        safety_followed = "[green]✅ Yes[/green]" if result.safety_constraints_followed else "[yellow]⚠️ No[/yellow]"
+        kpi_table.add_row(
+            result.agent_name,
+            f"{result.tool_calls_count}",
+            success_rate,
+            message_sent,
+            target_reached,
+            safety_followed
+        )
+    
+    console.print(kpi_table)
     console.print()
     
     # Detailed results
