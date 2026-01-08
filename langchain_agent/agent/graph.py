@@ -85,10 +85,39 @@ async def run_agent_session(
     # Get tools from MCP server
     tools = await client.get_tools()
     
-    if not tools:
-        print("⚠️  No tools found on MCP server")
+    # Add web search tools if available
+    web_tools = []
+    try:
+        # Try to add DuckDuckGo search (no API key required)
+        from langchain_community.tools import DuckDuckGoSearchRun
+        web_tools.append(DuckDuckGoSearchRun())
+        print("✓ Added DuckDuckGo web search tool")
+    except ImportError:
+        pass  # DuckDuckGo not installed
+    except Exception as e:
+        print(f"⚠️  Could not add DuckDuckGo: {e}")
+    
+    try:
+        # Try to add Tavily search (requires TAVILY_API_KEY)
+        if os.environ.get("TAVILY_API_KEY"):
+            from langchain_community.tools.tavily_search import TavilySearchResults
+            tavily_tool = TavilySearchResults(max_results=3)
+            web_tools.append(tavily_tool)
+            print("✓ Added Tavily web search tool")
+    except ImportError:
+        pass  # Tavily not installed
+    except Exception as e:
+        print(f"⚠️  Could not add Tavily: {e}")
+    
+    # Combine MCP tools with web tools
+    all_tools = list(tools) + web_tools
+    
+    if not all_tools:
+        print("⚠️  No tools found on MCP server or available web tools")
     else:
         print(f"✓ Loaded {len(tools)} tool(s) from MCP server")
+        if web_tools:
+            print(f"✓ Added {len(web_tools)} web search tool(s)")
         for tool in tools:
             desc = tool.description or ""
             if len(desc) > 60:
@@ -97,7 +126,7 @@ async def run_agent_session(
 
     # Get model string and create agent using create_agent
     model_string = get_model_string(config.provider, config.model)
-    agent = create_agent(model_string, tools)
+    agent = create_agent(model_string, all_tools)
     
     print()
     
