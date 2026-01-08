@@ -76,10 +76,10 @@ class AgentRunner:
         self.interactive_prompt = interactive_prompt  # Function to get user input during execution
         self.pending_user_input = None  # Store user input received during execution
         self.input_lock = None  # Will be created as asyncio.Lock() when needed
-        # Round-robin queue for parallel execution
-        self.input_queue = asyncio.Queue()  # Queue for agent input requests
-        self.input_responses = {}  # Dict mapping agent_name -> response
-        self.input_event = asyncio.Event()  # Event to signal new input available
+        # Round-robin queue for parallel execution (initialized when needed)
+        self.input_queue = None  # Queue for agent input requests
+        self.input_responses = None  # Dict mapping agent_name -> response
+        self.input_event = None  # Event to signal new input available
     
     def _update_progress(self, agent_name: str, status: str):
         """Update progress callback if available."""
@@ -538,7 +538,16 @@ If a task seems to require creating new entities or taking actions outside the e
                         pass
                 
                 # Execute agent (Runner.run is synchronous, so run in thread)
-                result = await asyncio.to_thread(Runner.run, agent, current_task)
+                # Note: Runner.run might be async, check and handle both cases
+                try:
+                    # Try as async first
+                    if asyncio.iscoroutinefunction(Runner.run):
+                        result = await Runner.run(agent, current_task)
+                    else:
+                        result = await asyncio.to_thread(Runner.run, agent, current_task)
+                except TypeError:
+                    # Fallback to thread if it's not async
+                    result = await asyncio.to_thread(Runner.run, agent, current_task)
                 
                 step.finish()
                 
@@ -591,6 +600,12 @@ If a task seems to require creating new entities or taking actions outside the e
         is_parallel = len(selected_agents) > 1
         
         if is_parallel:
+            # Initialize queue system for parallel execution
+            if self.input_queue is None:
+                self.input_queue = asyncio.Queue()
+                self.input_responses = {}
+                self.input_event = asyncio.Event()
+            
             # Parallel execution with round-robin input queue
             async def run_agent_with_queue(agent_name: str, agent_func):
                 """Run agent and handle input queue requests."""
@@ -604,7 +619,7 @@ If a task seems to require creating new entities or taking actions outside the e
                             # Wait for response
                             while agent_name not in self.input_responses:
                                 await asyncio.sleep(0.1)
-                            response = self.input_responses.pop(agent_name)
+                            response = self.input_responses.pop(agent_name, "")
                             return response
                         
                         # Temporarily replace interactive_prompt for this agent
@@ -682,13 +697,22 @@ If a task seems to require creating new entities or taking actions outside the e
                     results.append(result)
                     self._update_progress(tasks[i][0], "✅ Complete" if result.success else "❌ Failed")
             
-            # Cancel input handler
+            # Cancel input handler and clean up
             if input_handler_task:
                 input_handler_task.cancel()
                 try:
                     await input_handler_task
                 except asyncio.CancelledError:
                     pass
+            # Clear queue system
+            if self.input_queue:
+                while not self.input_queue.empty():
+                    try:
+                        self.input_queue.get_nowait()
+                        self.input_queue.task_done()
+                    except:
+                        pass
+                self.input_responses = {}
         else:
             # Single agent execution - wait for user input
             if "anthropic" in selected_agents:
