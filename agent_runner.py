@@ -176,68 +176,17 @@ If a task seems to require creating new entities or taking actions outside the e
                 message_count = 0
                 current_task = interpreted_task
                 
-                # Initialize input lock if interactive prompting is enabled
-                if self.interactive_prompt and self.input_lock is None:
-                    self.input_lock = asyncio.Lock()
-                
-                # Start background task to check for user input
-                input_task = None
-                if self.interactive_prompt:
-                    async def check_user_input():
-                        """Background task to periodically check for user input."""
-                        while True:
-                            await asyncio.sleep(3)  # Check every 3 seconds
-                            try:
-                                # Use loop.run_in_executor for non-blocking input (compatible with older Python)
-                                loop = asyncio.get_event_loop()
-                                user_input = await loop.run_in_executor(
-                                    None,
-                                    lambda: self.interactive_prompt("[dim]Anthropic Agent working... Type instruction (Enter to skip): [/dim]")
-                                )
-                                if user_input and user_input.strip():
-                                    async with self.input_lock:
-                                        self.pending_user_input = user_input.strip()
-                                    break  # Got input, stop checking
-                            except (EOFError, KeyboardInterrupt, asyncio.CancelledError):
-                                break
-                            except Exception:
-                                # Ignore other errors and continue
-                                pass
-                    
-                    input_task = asyncio.create_task(check_user_input())
-                
-                try:
-                    async for message in query(prompt=current_task, options=options):
-                        if hasattr(message, 'content'):
-                            for block in message.content:
-                                if hasattr(block, 'text'):
-                                    output_parts.append(block.text)
-                                    message_count += 1
-                                    
-                                    # Check for pending user input every 5 messages
-                                    if message_count % 5 == 0 and self.interactive_prompt and self.input_lock:
-                                        async with self.input_lock:
-                                            if self.pending_user_input:
-                                                # Incorporate user input into task
-                                                additional_instruction = f"\n\n[User additional instruction during execution: {self.pending_user_input}]"
-                                                current_task += additional_instruction
-                                                output_parts.append(f"\n[User input received: {self.pending_user_input}]")
-                                                self.pending_user_input = None
-                                                # Cancel input task and restart it
-                                                if input_task:
-                                                    input_task.cancel()
-                                                input_task = asyncio.create_task(check_user_input())
-                                    
-                                    # Show progress in real-time
-                                    if len(output_parts) > 0:
-                                        self._update_progress("Anthropic Agent", f"Working... ({message_count} messages)")
-                finally:
-                    if input_task:
-                        input_task.cancel()
-                        try:
-                            await input_task
-                        except asyncio.CancelledError:
-                            pass
+                # Execute task immediately - no pre-execution prompts
+                async for message in query(prompt=current_task, options=options):
+                    if hasattr(message, 'content'):
+                        for block in message.content:
+                            if hasattr(block, 'text'):
+                                output_parts.append(block.text)
+                                message_count += 1
+                                
+                                # Show progress in real-time
+                                if len(output_parts) > 0:
+                                    self._update_progress("Anthropic Agent", f"Working... ({message_count} messages)")
                 
                 step.finish()
                 
@@ -366,48 +315,8 @@ If a task seems to require creating new entities or taking actions outside the e
                         task_with_id = f"{task}\n\n{code_of_conduct}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
                         current_task = task_with_id
                         
-                        # Initialize input lock if interactive prompting is enabled
-                        if self.interactive_prompt and self.input_lock is None:
-                            self.input_lock = asyncio.Lock()
-                        
-                        # Check for user input before execution
-                        if self.interactive_prompt:
-                            try:
-                                loop = asyncio.get_event_loop()
-                                user_input = await loop.run_in_executor(
-                                    None,
-                                    lambda: self.interactive_prompt("[dim]Langchain Agent ready. Type instruction (Enter to start): [/dim]")
-                                )
-                                if user_input and user_input.strip():
-                                    current_task += f"\n\n[User instruction before execution: {user_input.strip()}]"
-                            except (EOFError, KeyboardInterrupt):
-                                pass
-                            except Exception:
-                                pass
-                        
+                        # Execute task immediately - no pre-execution prompts
                         messages = [HumanMessage(content=current_task)]
-                        
-                        # Start background task to check for user input during execution
-                        input_task = None
-                        if self.interactive_prompt:
-                            async def check_user_input():
-                                """Background task to check for user input during execution."""
-                                await asyncio.sleep(3)  # Wait a bit before checking
-                                try:
-                                    loop = asyncio.get_event_loop()
-                                    user_input = await loop.run_in_executor(
-                                        None,
-                                        lambda: self.interactive_prompt("[dim]Langchain Agent executing... Type instruction (Enter to skip): [/dim]")
-                                    )
-                                    if user_input and user_input.strip():
-                                        async with self.input_lock:
-                                            self.pending_user_input = user_input.strip()
-                                except (EOFError, KeyboardInterrupt, asyncio.CancelledError):
-                                    pass
-                                except Exception:
-                                    pass
-                            
-                            input_task = asyncio.create_task(check_user_input())
                         
                         # Add timeout to prevent hanging - reduced for faster execution
                         try:
@@ -415,24 +324,9 @@ If a task seems to require creating new entities or taking actions outside the e
                                 agent.ainvoke({"messages": messages}),
                                 timeout=60.0  # 1 minute timeout - faster execution
                             )
-                            
-                            # Check for any pending input after execution
-                            if input_task and not input_task.done():
-                                input_task.cancel()
-                            async with self.input_lock:
-                                if self.pending_user_input:
-                                    output_parts.append(f"\n[User input received during execution: {self.pending_user_input}]")
-                                    self.pending_user_input = None
                         except asyncio.TimeoutError:
                             output_parts.append("Error: Agent execution timed out after 1 minute")
                             raise TimeoutError("Langchain agent execution timed out")
-                        finally:
-                            if input_task:
-                                input_task.cancel()
-                                try:
-                                    await input_task
-                                except asyncio.CancelledError:
-                                    pass
                         
                         if exec_step:
                             exec_step.finish()
@@ -592,67 +486,9 @@ If a task seems to require creating new entities or taking actions outside the e
                 
                 current_task = interpreted_task
                 
-                # Initialize input lock if interactive prompting is enabled
-                if self.interactive_prompt and self.input_lock is None:
-                    self.input_lock = asyncio.Lock()
-                
-                # Check for user input before execution
-                if self.interactive_prompt:
-                    try:
-                        loop = asyncio.get_event_loop()
-                        user_input = await loop.run_in_executor(
-                            None,
-                            lambda: self.interactive_prompt("[dim]OpenAI Agent ready. Type instruction (Enter to start): [/dim]")
-                        )
-                        if user_input and user_input.strip():
-                            current_task += f"\n\n[User instruction before execution: {user_input.strip()}]"
-                    except (EOFError, KeyboardInterrupt):
-                        pass
-                    except Exception:
-                        pass
-                
-                # Start background task to check for user input during execution
-                input_task = None
-                if self.interactive_prompt:
-                    async def check_user_input():
-                        """Background task to check for user input during execution."""
-                        await asyncio.sleep(3)  # Wait a bit before checking
-                        try:
-                            loop = asyncio.get_event_loop()
-                            user_input = await loop.run_in_executor(
-                                None,
-                                lambda: self.interactive_prompt("[dim]OpenAI Agent executing... Type instruction (Enter to skip): [/dim]")
-                            )
-                            if user_input and user_input.strip():
-                                async with self.input_lock:
-                                    self.pending_user_input = user_input.strip()
-                        except (EOFError, KeyboardInterrupt, asyncio.CancelledError):
-                            pass
-                        except Exception:
-                            pass
-                    
-                    input_task = asyncio.create_task(check_user_input())
-                
+                # Execute task immediately - no pre-execution prompts
                 self._update_progress("OpenAI Agent", "Interpreting and executing task...")
-                try:
-                    result = await Runner.run(agent, current_task)
-                    
-                    # Check for any pending input after execution
-                    if input_task and not input_task.done():
-                        input_task.cancel()
-                    async with self.input_lock:
-                        if self.pending_user_input:
-                            # Note: OpenAI agent result is final, so we append to output
-                            if result and result.final_output:
-                                result.final_output += f"\n[User input received during execution: {self.pending_user_input}]"
-                            self.pending_user_input = None
-                finally:
-                    if input_task:
-                        input_task.cancel()
-                        try:
-                            await input_task
-                        except asyncio.CancelledError:
-                            pass
+                result = await Runner.run(agent, current_task)
                 
                 step.finish()
                 
