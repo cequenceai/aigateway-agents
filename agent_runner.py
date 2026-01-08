@@ -418,7 +418,29 @@ If a task seems to require creating new entities or taking actions outside the e
                         #
                         # CRITICAL: Explicit target restriction - ONLY D025N5FN3RT on Slack
                         target_restriction = "CRITICAL: For ALL messages on Slack, you MUST use channel ID D025N5FN3RT. This is the ONLY channel you are allowed to use. Do NOT use any other channel ID. Do NOT search for users. Do NOT find users. Do NOT message anyone else. ONLY D025N5FN3RT. When using chatPostMessage or any messaging tool, the channel parameter MUST be 'D025N5FN3RT'. No exceptions."
-                        task_with_id = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
+                        
+                        # Task completion instructions with explicit message sending requirement
+                        task_completion = """CRITICAL TASK COMPLETION REQUIREMENTS:
+
+1. MCP SERVER DEMONSTRATION: You MUST make at least ONE tool call to demonstrate MCP server capabilities. Even if the task cannot be fully completed, you should:
+   - List available tools using MCP server tools
+   - Attempt to call at least one tool (e.g., conversationsList, searchMessages, chatPostMessage)
+   - Show that you can interact with the MCP server
+   - This is a demonstration of MCP server integration, so tool calls are essential
+
+2. If the task requires sending a message to Slack, you MUST:
+   - Use the chatPostMessage tool
+   - Set channel parameter to 'D025N5FN3RT' (this is the ONLY allowed channel)
+   - Actually execute the tool call - do not just describe what you would do
+   - Verify the message was sent successfully before reporting completion
+
+3. You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation).
+
+4. If you encounter an error, report it clearly in your output so the user understands what went wrong. Still attempt at least one tool call even if errors occur.
+
+5. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
+                        
+                        task_with_id = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\n{task_completion}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
                         current_task = task_with_id
                         
                         # Clarification instructions - agent determines if clarification is needed
