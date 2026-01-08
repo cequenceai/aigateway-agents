@@ -554,19 +554,59 @@ If a task seems to require creating new entities or taking actions outside the e
                 # Execute task - with interactive prompting if enabled
                 self._update_progress("OpenAI Agent", "Interpreting and executing task...")
                 
-                # For OpenAI agent, allow user input if interactive mode
+                # For OpenAI agent, allow conversational clarification if interactive mode
                 if self.interactive_prompt:
-                    # Wait for user input before starting
+                    conversation_round = 0
+                    max_rounds = 5  # Limit conversation rounds
+                    
+                    while conversation_round < max_rounds:
+                        try:
+                            # Show original task and current state
+                            original_task_preview = task[:150] + "..." if len(task) > 150 else task
+                            
+                            if conversation_round == 0:
+                                prompt_text = f"[bold cyan]OpenAI Agent:[/bold cyan] I'm ready to work on your task.\n[dim]Original task: {original_task_preview}[/dim]\n[yellow]Do you have any clarifying questions for me, or should I proceed? (Enter to proceed, or type your question/clarification): [/yellow]"
+                            else:
+                                prompt_text = f"[bold cyan]OpenAI Agent:[/bold cyan] I have a follow-up question.\n[dim]Original task: {original_task_preview}[/dim]\n[yellow]Your response (Enter to proceed with current understanding): [/yellow]"
+                            
+                            user_input = await asyncio.to_thread(
+                                self.interactive_prompt,
+                                prompt_text
+                            )
+                            
+                            if not user_input or not user_input.strip():
+                                # User pressed Enter - proceed with current understanding
+                                break
+                            
+                            # Add user clarification
+                            clarification = user_input.strip()
+                            current_task = f"{current_task}\n\n[User clarification: {clarification}]"
+                            conversation_round += 1
+                            
+                            # Agent can ask follow-up or confirm
+                            if conversation_round < max_rounds:
+                                confirm_prompt = f"[bold cyan]OpenAI Agent:[/bold cyan] Thank you for the clarification.\n[dim]Current understanding: {current_task[:200]}...[/dim]\n[yellow]Any other questions, or should I proceed? (Enter to proceed, or type another question): [/yellow]"
+                                more_input = await asyncio.to_thread(
+                                    self.interactive_prompt,
+                                    confirm_prompt
+                                )
+                                if not more_input or not more_input.strip():
+                                    break
+                                current_task = f"{current_task}\n\n[User additional clarification: {more_input.strip()}]"
+                                conversation_round += 1
+                            
+                        except (EOFError, KeyboardInterrupt):
+                            break
+                    
+                    # Final confirmation before execution
                     try:
-                        # Show context: what task the agent is about to work on
-                        task_preview = current_task[:100] + "..." if len(current_task) > 100 else current_task
-                        prompt_text = f"[yellow]OpenAI Agent ready to work on:[/yellow]\n[dim]{task_preview}[/dim]\n[yellow]Type additional instruction (Enter to start): [/yellow]"
-                        user_input = await asyncio.to_thread(
+                        final_prompt = f"[bold cyan]OpenAI Agent:[/bold cyan] I understand the task. Ready to execute.\n[dim]Task: {current_task[:200]}...[/dim]\n[yellow]Proceed with execution? (Enter to start, or type any last-minute changes): [/yellow]"
+                        final_input = await asyncio.to_thread(
                             self.interactive_prompt,
-                            prompt_text
+                            final_prompt
                         )
-                        if user_input and user_input.strip():
-                            current_task = f"{current_task}\n\n[User additional instruction: {user_input.strip()}]"
+                        if final_input and final_input.strip():
+                            current_task = f"{current_task}\n\n[Final user instruction: {final_input.strip()}]"
                     except (EOFError, KeyboardInterrupt):
                         pass
                 
@@ -640,15 +680,16 @@ If a task seems to require creating new entities or taking actions outside the e
                 self.input_event = asyncio.Event()
             
             # Parallel execution with round-robin input queue
-            async def run_agent_with_queue(agent_name: str, agent_func):
+            async def run_agent_with_queue(agent_name: str, agent_func, original_task: str):
                 """Run agent and handle input queue requests."""
                 try:
                     # Add agent to input queue system
                     if self.interactive_prompt:
                         # Agent can request input by putting itself in queue
                         async def request_input(prompt_text: str) -> str:
-                            """Request user input through round-robin queue."""
-                            await self.input_queue.put((agent_name, prompt_text))
+                            """Request user input through round-robin queue with task context."""
+                            # Include original task in the queue for context
+                            await self.input_queue.put((agent_name, prompt_text, original_task))
                             # Wait for response
                             while agent_name not in self.input_responses:
                                 await asyncio.sleep(0.1)
@@ -710,8 +751,8 @@ If a task seems to require creating new entities or taking actions outside the e
             if "openai" in selected_agents:
                 tasks.append(("OpenAI Agent", self.run_openai_agent))
             
-            # Execute all in parallel
-            agent_tasks = [run_agent_with_queue(name, func) for name, func in tasks]
+            # Execute all in parallel (pass original task for context)
+            agent_tasks = [run_agent_with_queue(name, func, task) for name, func in tasks]
             agent_results = await asyncio.gather(*agent_tasks, return_exceptions=True)
             
             # Process results
