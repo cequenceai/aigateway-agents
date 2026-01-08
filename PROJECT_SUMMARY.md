@@ -215,14 +215,24 @@ python3 agent_runner.py --mcp-url 'https://your-server.com/mcp' --temperature 0.
 
 ## Switching Accounts
 
+**⚠️ IMPORTANT: OAuth Tokens are TEMPORARY Refresh Tokens**
+
 When switching accounts or starting a new session:
 
-1. **OAuth tokens are temporary** - They expire and are not persisted
-2. **Re-authentication required** - Browser will open for OAuth flow
-3. **Previous tokens invalid** - Cannot reuse tokens from previous session
-4. **Fresh start** - Each session starts with new authentication
+1. **OAuth tokens are TEMPORARY** - They are stored in memory only (`InMemoryTokenStorage`)
+2. **Session-based expiration** - Tokens expire when the session ends
+3. **Re-authentication required** - Browser will open for OAuth flow on each new session
+4. **Previous tokens invalid** - Cannot reuse tokens from previous session
+5. **Fresh start** - Each session starts with new authentication
+6. **No persistence** - Tokens are NOT saved to disk or persisted anywhere
 
-**This is by design** - Tokens are intentionally temporary for security. If you need persistent authentication, consider implementing token storage (with proper security measures).
+**This is by design** - Tokens are intentionally temporary for security. The system uses temporary refresh tokens that are:
+- Stored only in memory during the session
+- Automatically expired when the program exits
+- Not shared between sessions
+- Require fresh OAuth flow for each new session
+
+If you need persistent authentication, consider implementing secure token storage (with proper encryption and security measures).
 
 ## Support
 

@@ -66,3 +66,12 @@ When providing tasks to agents, use AI-friendly terms for:
 - Emphasis (use CRITICAL/IMPORTANT instead of "please")
 
 This helps agents understand intent more clearly and execute tasks more accurately.
+
+## Implementation
+
+The agent runner automatically adds user reference instructions to all tasks:
+```
+IMPORTANT: When the task refers to 'me', 'myself', 'I', or 'the user', you should interpret this as referring to 'the user', 'self', or 'the system owner'. All messages, information, and outputs should be directed to the user (self). When the task says 'send to me' or 'DM me', it means send to the user (self) via the specified channel.
+```
+
+This ensures agents correctly interpret user references even when using cordial language.
