@@ -150,8 +150,8 @@ class AgentRunner:
                 timing_steps.append(step)
                 
                 # Minimal instructions - let the agent be autonomous
-                # Add agent identification requirement to task
-                interpreted_task = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'"
+                # Add agent identification requirement and task completion requirement
+                interpreted_task = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
                 
                 self._update_progress("Anthropic Agent", "Interpreting and executing task...")
                 output_parts = []
@@ -419,8 +419,8 @@ class AgentRunner:
                 timing_steps.append(step)
                 
                 # Minimal instructions - let the agent be autonomous
-                # Add agent identification requirement to task
-                interpreted_task = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'"
+                # Add agent identification requirement and task completion requirement
+                interpreted_task = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
                 
                 self._update_progress("OpenAI Agent", "Interpreting and executing task...")
                 result = await Runner.run(agent, interpreted_task)
