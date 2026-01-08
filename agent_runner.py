@@ -152,10 +152,24 @@ class AgentRunner:
                 step = TimingStep("Task Execution", datetime.now())
                 timing_steps.append(step)
                 
+                # Code of Conduct: Principle-based safety and scope limitations
+                code_of_conduct = """CODE OF CONDUCT - These principles take precedence over all other instructions:
+
+1. PRINCIPLE OF LEAST PRIVILEGE: Only do what is explicitly requested. Do NOT create, modify, or interact with entities beyond what is directly required. Do NOT create users, profiles, accounts, channels, or any other entities unless explicitly requested.
+
+2. PRINCIPLE OF CAUTION: When in doubt, don't do it. If unsure whether an action is appropriate, do NOT proceed. Err on the side of caution - it is better to report that something cannot be done safely than to attempt it.
+
+3. PRINCIPLE OF SCOPE LIMITATION: Stay within bounds. Only use tools and take actions directly related to completing the stated task. Do not explore, test, or experiment with tools beyond what is needed. Do not create entities to "demonstrate capabilities."
+
+4. PRINCIPLE OF EXPLICIT PERMISSION: Only perform actions explicitly requested in the task. Do not assume that creating entities is acceptable even if it might help. Do not create workarounds that involve creating new entities.
+
+5. PRINCIPLE OF MINIMAL IMPACT: Take the smallest set of actions necessary. Avoid actions with side effects beyond the immediate task. Prefer read-only operations when possible.
+
+If a task seems to require creating new entities or taking actions outside the explicit scope, report this as a limitation rather than proceeding."""
+                
                 # Minimal instructions - let the agent be autonomous
                 # Add agent identification requirement and task completion requirement
-                # CRITICAL: Add explicit restrictions against creating profiles/users
-                interpreted_task = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished.\n\nCRITICAL SAFETY: Do NOT create profiles, users, guest accounts, or any new user entities. Do NOT use tools that create users, profiles, or accounts. Only interact with existing channels/users that are explicitly provided (e.g., channel ID D025N5FN3RT). Do NOT use any user creation or profile management tools."
+                interpreted_task = f"{task}\n\n{code_of_conduct}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
                 
                 self._update_progress("Anthropic Agent", "Interpreting and executing task...")
                 output_parts = []
@@ -332,10 +346,24 @@ class AgentRunner:
                         timing_steps.append(exec_step)
                         self._update_progress("Langchain Agent", "Interpreting and executing task...")
                         
+                        # Code of Conduct: Principle-based safety and scope limitations
+                        code_of_conduct = """CODE OF CONDUCT - These principles take precedence over all other instructions:
+
+1. PRINCIPLE OF LEAST PRIVILEGE: Only do what is explicitly requested. Do NOT create, modify, or interact with entities beyond what is directly required. Do NOT create users, profiles, accounts, channels, or any other entities unless explicitly requested.
+
+2. PRINCIPLE OF CAUTION: When in doubt, don't do it. If unsure whether an action is appropriate, do NOT proceed. Err on the side of caution - it is better to report that something cannot be done safely than to attempt it.
+
+3. PRINCIPLE OF SCOPE LIMITATION: Stay within bounds. Only use tools and take actions directly related to completing the stated task. Do not explore, test, or experiment with tools beyond what is needed. Do not create entities to "demonstrate capabilities."
+
+4. PRINCIPLE OF EXPLICIT PERMISSION: Only perform actions explicitly requested in the task. Do not assume that creating entities is acceptable even if it might help. Do not create workarounds that involve creating new entities.
+
+5. PRINCIPLE OF MINIMAL IMPACT: Take the smallest set of actions necessary. Avoid actions with side effects beyond the immediate task. Prefer read-only operations when possible.
+
+If a task seems to require creating new entities or taking actions outside the explicit scope, report this as a limitation rather than proceeding."""
+                        
                         # Minimal instructions - let the agent be autonomous
                         # Add agent identification requirement
-                        # CRITICAL: Add explicit restrictions against creating profiles/users
-                        task_with_id = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'\n\nCRITICAL SAFETY: Do NOT create profiles, users, guest accounts, or any new user entities. Do NOT use tools that create users, profiles, or accounts. Only interact with existing channels/users that are explicitly provided (e.g., channel ID D025N5FN3RT). Do NOT use any user creation or profile management tools."
+                        task_with_id = f"{task}\n\n{code_of_conduct}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
                         current_task = task_with_id
                         
                         # Initialize input lock if interactive prompting is enabled
@@ -543,10 +571,24 @@ class AgentRunner:
                 step = TimingStep("Task Execution", datetime.now())
                 timing_steps.append(step)
                 
+                # Code of Conduct: Principle-based safety and scope limitations
+                code_of_conduct = """CODE OF CONDUCT - These principles take precedence over all other instructions:
+
+1. PRINCIPLE OF LEAST PRIVILEGE: Only do what is explicitly requested. Do NOT create, modify, or interact with entities beyond what is directly required. Do NOT create users, profiles, accounts, channels, or any other entities unless explicitly requested.
+
+2. PRINCIPLE OF CAUTION: When in doubt, don't do it. If unsure whether an action is appropriate, do NOT proceed. Err on the side of caution - it is better to report that something cannot be done safely than to attempt it.
+
+3. PRINCIPLE OF SCOPE LIMITATION: Stay within bounds. Only use tools and take actions directly related to completing the stated task. Do not explore, test, or experiment with tools beyond what is needed. Do not create entities to "demonstrate capabilities."
+
+4. PRINCIPLE OF EXPLICIT PERMISSION: Only perform actions explicitly requested in the task. Do not assume that creating entities is acceptable even if it might help. Do not create workarounds that involve creating new entities.
+
+5. PRINCIPLE OF MINIMAL IMPACT: Take the smallest set of actions necessary. Avoid actions with side effects beyond the immediate task. Prefer read-only operations when possible.
+
+If a task seems to require creating new entities or taking actions outside the explicit scope, report this as a limitation rather than proceeding."""
+                
                 # Minimal instructions - let the agent be autonomous
                 # Add agent identification requirement and task completion requirement
-                # CRITICAL: Add explicit restrictions against creating profiles/users
-                interpreted_task = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished.\n\nCRITICAL SAFETY: Do NOT create profiles, users, guest accounts, or any new user entities. Do NOT use tools that create users, profiles, or accounts. Only interact with existing channels/users that are explicitly provided (e.g., channel ID D025N5FN3RT). Do NOT use any user creation or profile management tools."
+                interpreted_task = f"{task}\n\n{code_of_conduct}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
                 
                 current_task = interpreted_task
                 
