@@ -324,9 +324,12 @@ If a task seems to require creating new entities or taking actions outside the e
                         # DO NOT allow agents to search for users or message anyone except the specified channel.
                         # This restriction MUST be explicit and repeated to prevent unwanted messaging.
                         #
+                        # User reference instructions
+                        user_reference = "IMPORTANT: When the task refers to 'me', 'myself', 'I', or 'the user', you should interpret this as referring to 'the user', 'self', or 'the system owner'. All messages, information, and outputs should be directed to the user (self). When the task says 'send to me' or 'DM me', it means send to the user (self) via the specified channel."
+                        #
                         # CRITICAL: Explicit target restriction - ONLY D025N5FN3RT on Slack
                         target_restriction = "CRITICAL: For ALL messages on Slack, you MUST use channel ID D025N5FN3RT. This is the ONLY channel you are allowed to use. Do NOT use any other channel ID. Do NOT search for users. Do NOT find users. Do NOT message anyone else. ONLY D025N5FN3RT. When using chatPostMessage or any messaging tool, the channel parameter MUST be 'D025N5FN3RT'. No exceptions."
-                        task_with_id = f"{task}\n\n{code_of_conduct}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
+                        task_with_id = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
                         current_task = task_with_id
                         
                         # Execute task - with interactive prompting if enabled
@@ -481,12 +484,20 @@ If a task seems to require creating new entities or taking actions outside the e
                 self._update_progress("OpenAI Agent", "Initializing OpenAI Agent...")
                 
                 model = os.environ.get("OPENAI_MODEL", "gpt-4o")
-                agent = Agent(
-                    name="OpenAI Agent",
-                    instructions="You are an autonomous AI agent with access to MCP server tools. Use the available tools to complete tasks as requested. When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'",
-                    model=model,
-                    mcp_servers=[mcp_server]
-                )
+                # Set temperature if provided
+                agent_kwargs = {
+                    "name": "OpenAI Agent",
+                    "instructions": "You are an autonomous AI agent with access to MCP server tools. Use the available tools to complete tasks as requested. When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'",
+                    "model": model,
+                    "mcp_servers": [mcp_server]
+                }
+                # Temperature control (if supported by OpenAI Agents SDK)
+                if self.temperature is not None:
+                    try:
+                        agent_kwargs["temperature"] = self.temperature
+                    except:
+                        pass  # Ignore if not supported
+                agent = Agent(**agent_kwargs)
                 step.finish()
                 
                 step = TimingStep("Task Execution", datetime.now())
@@ -515,9 +526,12 @@ If a task seems to require creating new entities or taking actions outside the e
                 # DO NOT allow agents to search for users or message anyone except the specified channel.
                 # This restriction MUST be explicit and repeated to prevent unwanted messaging.
                 #
+                # User reference instructions
+                user_reference = "IMPORTANT: When the task refers to 'me', 'myself', 'I', or 'the user', you should interpret this as referring to 'the user', 'self', or 'the system owner'. All messages, information, and outputs should be directed to the user (self). When the task says 'send to me' or 'DM me', it means send to the user (self) via the specified channel."
+                #
                 # CRITICAL: Explicit target restriction - ONLY D025N5FN3RT on Slack
                 target_restriction = "CRITICAL: For ALL messages on Slack, you MUST use channel ID D025N5FN3RT. This is the ONLY channel you are allowed to use. Do NOT use any other channel ID. Do NOT search for users. Do NOT find users. Do NOT message anyone else. ONLY D025N5FN3RT. When using chatPostMessage or any messaging tool, the channel parameter MUST be 'D025N5FN3RT'. No exceptions."
-                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
+                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
                 
                 current_task = interpreted_task
                 
@@ -1061,7 +1075,8 @@ async def main():
         mcp_url=args.mcp_url, 
         auth_header=args.auth_header, 
         progress_callback=update_progress,
-        interactive_prompt=interactive_prompt_fn
+        interactive_prompt=interactive_prompt_fn,
+        temperature=args.temperature
     )
     
     console.print()
