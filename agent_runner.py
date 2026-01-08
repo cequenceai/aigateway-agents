@@ -28,9 +28,17 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.markdown import Markdown
 from rich.prompt import Prompt, Confirm
 from rich import box
+from rich.spinner import Spinner
+from rich.layout import Layout
+from rich.text import Text
+from threading import Lock
 
 console = Console()
 logger = logging.getLogger(__name__)
+
+# Global loading screen state
+_loading_screen = None
+_loading_lock = Lock()
 
 
 @dataclass
@@ -1209,11 +1217,58 @@ async def main():
     ))
     console.print()
     
-    # Run agents with progress tracking
-    def update_progress(agent_name: str, status: str):
-        """Update progress display."""
-        timestamp = datetime.now().strftime('%H:%M:%S')
-        console.print(f"[dim][{timestamp}][/dim] [cyan]{agent_name}:[/cyan] {status}")
+    # Persistent loading screen class
+    class LoadingScreen:
+        """Persistent loading screen that stays in position."""
+        def __init__(self, agent_names: List[str]):
+            self.agent_names = agent_names
+            self.statuses = {name: "Initializing..." for name in agent_names}
+            self.live = None
+            self.start_time = datetime.now()
+        
+        def render(self):
+            """Render the loading screen."""
+            elapsed = (datetime.now() - self.start_time).total_seconds()
+            elapsed_str = f"{elapsed:.1f}s"
+            
+            # Create status rows for each agent
+            rows = []
+            for agent_name in self.agent_names:
+                status = self.statuses.get(agent_name, "Waiting...")
+                spinner = Spinner("dots", style="cyan")
+                rows.append(f"  {spinner} [bold cyan]{agent_name}:[/bold cyan] {status}")
+            
+            content = "\n".join(rows)
+            content += f"\n\n[dim]⏱  Elapsed: {elapsed_str}[/dim]"
+            
+            return Panel(
+                content,
+                title="[bold cyan]🤖 Agent Execution[/bold cyan]",
+                border_style="cyan",
+                padding=(1, 2)
+            )
+        
+        def update_status(self, agent_name: str, status: str):
+            """Update status for an agent."""
+            with _loading_lock:
+                if agent_name in self.statuses:
+                    self.statuses[agent_name] = status
+                    if self.live:
+                        self.live.update(self.render())
+        
+        def start(self):
+            """Start the live display."""
+            self.live = Live(self.render(), console=console, refresh_per_second=4, vertical_overflow="visible")
+            self.live.start()
+        
+        def stop(self):
+            """Stop the live display."""
+            if self.live:
+                self.live.stop()
+                self.live = None
+    
+    # Initialize loading screen (will be set after agent selection)
+    loading_screen = None
     
     # Create interactive prompt function if in interactive mode
     interactive_prompt_fn = None
@@ -1240,12 +1295,21 @@ async def main():
     
     console.print()
     if len(selected_agents) > 1:
-        console.print("[bold]Running agents in parallel with round-robin input queue...[/bold]")
+        if not loading_screen:
+            console.print("[bold]Running agents in parallel with round-robin input queue...[/bold]")
     else:
-        console.print("[bold]Running agent (waiting for your input)...[/bold]")
-    console.print()
+        if not loading_screen:
+            console.print("[bold]Running agent (waiting for your input)...[/bold]")
+    if not loading_screen:
+        console.print()
     
-    results = await runner.run_agents(task, selected_agents)
+    try:
+        results = await runner.run_agents(task, selected_agents)
+    finally:
+        # Stop loading screen when done
+        if loading_screen:
+            loading_screen.stop()
+            console.print()  # Add spacing after loading screen
     
     console.print()  # New line after progress updates
     
