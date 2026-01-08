@@ -1,8 +1,5 @@
-<<<<<<< HEAD
 # aigateway-agents
 Cequence AI Gateway Agent Examples
-=======
-# Three Agents - MCP Integration Examples
 
 This repository contains three complete agent implementations with generic MCP (Model Context Protocol) server connectors:
 
@@ -16,11 +13,25 @@ This repository contains three complete agent implementations with generic MCP (
 - ✅ **OAuth Support** - Automatic OAuth flow for protected MCP servers
 - ✅ **Multiple Authentication Methods** - Static headers, OAuth, or token storage
 - ✅ **Comprehensive Tests** - Test suites for each agent
+- ✅ **Unified Agent Runner** - Run tasks across multiple agents with a single CLI
 - ✅ **Example Implementations** - Slack MCP server used as example
 
 ## Quick Start
 
-### Anthropic Agent (Claude Agent SDK)
+### Unified Agent Runner (Recommended)
+
+Run tasks across all three agents with a single command:
+
+```bash
+cd three_agents
+export ANTHROPIC_API_KEY="your-key"
+export OPENAI_API_KEY="your-key"
+python3 agent_runner.py --mcp-url https://your-mcp-server.com/mcp
+```
+
+### Individual Agents
+
+#### Anthropic Agent (Claude Agent SDK)
 
 ```bash
 cd anthropic_agent
@@ -29,7 +40,7 @@ export ANTHROPIC_API_KEY="your-key"
 python agent.py --mcp-url https://your-mcp-server.com/mcp
 ```
 
-### Langchain Agent
+#### Langchain Agent
 
 ```bash
 cd langchain_agent
@@ -38,7 +49,7 @@ export ANTHROPIC_API_KEY="your-key"  # or OPENAI_API_KEY
 python mcp_agent.py --mcp-url https://your-mcp-server.com/mcp
 ```
 
-### OpenAI Agent
+#### OpenAI Agent
 
 ```bash
 cd openai_agent
@@ -81,6 +92,7 @@ three_agents/
 ├── anthropic_agent/     # Claude Agent SDK implementation
 ├── langchain_agent/      # Langchain MCP agent
 ├── openai_agent/         # OpenAI Agents SDK implementation
+├── agent_runner.py       # Unified agent runner CLI
 └── README.md            # This file
 ```
 
@@ -94,4 +106,3 @@ Each agent directory contains:
 ## License
 
 MIT
->>>>>>> three-agents-examples
