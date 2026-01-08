@@ -68,11 +68,12 @@ class AgentResult:
 class AgentRunner:
     """Runs tasks across multiple agents."""
     
-    def __init__(self, mcp_url: str, auth_header: Optional[str] = None, progress_callback=None):
+    def __init__(self, mcp_url: str, auth_header: Optional[str] = None, progress_callback=None, interactive_prompt=None):
         self.mcp_url = mcp_url
         self.auth_header = auth_header
         self.results: List[AgentResult] = []
         self.progress_callback = progress_callback
+        self.interactive_prompt = interactive_prompt  # Function to get user input during execution
     
     def _update_progress(self, agent_name: str, status: str):
         """Update progress callback if available."""
@@ -155,11 +156,22 @@ class AgentRunner:
                 
                 self._update_progress("Anthropic Agent", "Interpreting and executing task...")
                 output_parts = []
+                message_count = 0
                 async for message in query(prompt=interpreted_task, options=options):
                     if hasattr(message, 'content'):
                         for block in message.content:
                             if hasattr(block, 'text'):
                                 output_parts.append(block.text)
+                                message_count += 1
+                                # Allow interactive prompting every 5 messages
+                                if self.interactive_prompt and message_count % 5 == 0:
+                                    try:
+                                        user_input = self.interactive_prompt("Agent is working... Enter additional instruction (or press Enter to continue): ")
+                                        if user_input and user_input.strip():
+                                            # Add user input to the conversation
+                                            interpreted_task += f"\n\nUser additional instruction: {user_input.strip()}"
+                                    except (EOFError, KeyboardInterrupt):
+                                        pass  # Continue execution if no input available
                 step.finish()
                 
                 execution_time = (datetime.now() - start_time).total_seconds()
@@ -271,14 +283,14 @@ class AgentRunner:
                         # Add agent identification requirement
                         task_with_id = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
                         messages = [HumanMessage(content=task_with_id)]
-                        # Add timeout to prevent hanging
+                        # Add timeout to prevent hanging - reduced for faster execution
                         try:
                             result = await asyncio.wait_for(
                                 agent.ainvoke({"messages": messages}),
-                                timeout=180.0  # 3 minute timeout
+                                timeout=60.0  # 1 minute timeout - faster execution
                             )
                         except asyncio.TimeoutError:
-                            output_parts.append("Error: Agent execution timed out after 3 minutes")
+                            output_parts.append("Error: Agent execution timed out after 1 minute")
                             raise TimeoutError("Langchain agent execution timed out")
                         
                         if exec_step:
