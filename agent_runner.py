@@ -68,12 +68,13 @@ class AgentResult:
 class AgentRunner:
     """Runs tasks across multiple agents."""
     
-    def __init__(self, mcp_url: str, auth_header: Optional[str] = None, progress_callback=None, interactive_prompt=None):
+    def __init__(self, mcp_url: str, auth_header: Optional[str] = None, progress_callback=None, interactive_prompt=None, temperature: Optional[float] = None):
         self.mcp_url = mcp_url
         self.auth_header = auth_header
         self.results: List[AgentResult] = []
         self.progress_callback = progress_callback
         self.interactive_prompt = interactive_prompt  # Function to get user input during execution
+        self.temperature = temperature  # Temperature for model generation (0.0-2.0)
         self.pending_user_input = None  # Store user input received during execution
         self.input_lock = None  # Will be created as asyncio.Lock() when needed
         # Round-robin queue for parallel execution (initialized when needed)
@@ -979,6 +980,12 @@ async def main():
         "--no-interactive",
         action="store_true",
         help="Disable interactive mode (requires --task and --agents)"
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        help="Temperature for model generation (0.0-2.0, default: model default)"
     )
     
     args = parser.parse_args()
