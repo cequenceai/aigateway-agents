@@ -169,8 +169,8 @@ If a task seems to require creating new entities or taking actions outside the e
                 
                 # Minimal instructions - let the agent be autonomous
                 # Add agent identification requirement and task completion requirement
-                # CRITICAL: Explicit target restriction
-                target_restriction = "CRITICAL MESSAGING RESTRICTION: You MUST ONLY send messages to the channel ID D025N5FN3RT. Do NOT message any other users, channels, or entities. Do NOT search for users to message. Do NOT message random people. Do NOT use tools to find users. ONLY use the channel ID D025N5FN3RT that is explicitly provided. If the task asks you to message someone, you MUST use channel ID D025N5FN3RT only."
+                # CRITICAL: Explicit target restriction - ONLY D025N5FN3RT on Slack
+                target_restriction = "CRITICAL: For ALL messages on Slack, you MUST use channel ID D025N5FN3RT. This is the ONLY channel you are allowed to use. Do NOT use any other channel ID. Do NOT search for users. Do NOT find users. Do NOT message anyone else. ONLY D025N5FN3RT. When using chatPostMessage or any messaging tool, the channel parameter MUST be 'D025N5FN3RT'. No exceptions."
                 interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
                 
                 self._update_progress("Anthropic Agent", "Interpreting and executing task...")
@@ -314,8 +314,8 @@ If a task seems to require creating new entities or taking actions outside the e
                         
                         # Minimal instructions - let the agent be autonomous
                         # Add agent identification requirement
-                        # CRITICAL: Explicit target restriction
-                        target_restriction = "CRITICAL MESSAGING RESTRICTION: You MUST ONLY send messages to the channel ID D025N5FN3RT. Do NOT message any other users, channels, or entities. Do NOT search for users to message. Do NOT message random people. Do NOT use tools to find users. ONLY use the channel ID D025N5FN3RT that is explicitly provided. If the task asks you to message someone, you MUST use channel ID D025N5FN3RT only."
+                        # CRITICAL: Explicit target restriction - ONLY D025N5FN3RT on Slack
+                        target_restriction = "CRITICAL: For ALL messages on Slack, you MUST use channel ID D025N5FN3RT. This is the ONLY channel you are allowed to use. Do NOT use any other channel ID. Do NOT search for users. Do NOT find users. Do NOT message anyone else. ONLY D025N5FN3RT. When using chatPostMessage or any messaging tool, the channel parameter MUST be 'D025N5FN3RT'. No exceptions."
                         task_with_id = f"{task}\n\n{code_of_conduct}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
                         current_task = task_with_id
                         
@@ -486,8 +486,8 @@ If a task seems to require creating new entities or taking actions outside the e
                 
                 # Minimal instructions - let the agent be autonomous
                 # Add agent identification requirement and task completion requirement
-                # CRITICAL: Explicit target restriction
-                target_restriction = "CRITICAL MESSAGING RESTRICTION: You MUST ONLY send messages to the channel ID D025N5FN3RT. Do NOT message any other users, channels, or entities. Do NOT search for users to message. Do NOT message random people. Do NOT use tools to find users. ONLY use the channel ID D025N5FN3RT that is explicitly provided. If the task asks you to message someone, you MUST use channel ID D025N5FN3RT only."
+                # CRITICAL: Explicit target restriction - ONLY D025N5FN3RT on Slack
+                target_restriction = "CRITICAL: For ALL messages on Slack, you MUST use channel ID D025N5FN3RT. This is the ONLY channel you are allowed to use. Do NOT use any other channel ID. Do NOT search for users. Do NOT find users. Do NOT message anyone else. ONLY D025N5FN3RT. When using chatPostMessage or any messaging tool, the channel parameter MUST be 'D025N5FN3RT'. No exceptions."
                 interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
                 
                 current_task = interpreted_task
