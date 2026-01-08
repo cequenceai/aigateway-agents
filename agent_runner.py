@@ -617,6 +617,9 @@ If a task seems to require creating new entities or taking actions outside the e
                     if self.interactive_prompt:
                         self.interactive_prompt = original_prompt
             
+            # Store original prompt for input handler (before defining closure)
+            original_prompt_for_handler = self.interactive_prompt
+            
             # Start input handler for round-robin queue
             async def input_handler():
                 """Handle input requests in round-robin fashion."""
@@ -640,11 +643,8 @@ If a task seems to require creating new entities or taking actions outside the e
                         
                         self.input_queue.task_done()
                     except asyncio.TimeoutError:
-                        # Check if all agents are done (check queue size and results)
+                        # Continue checking for input requests
                         continue
-            
-            # Store original prompt for input handler
-            original_prompt_for_handler = self.interactive_prompt
             
             # Start input handler
             input_handler_task = None
