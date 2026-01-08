@@ -154,7 +154,8 @@ class AgentRunner:
                 
                 # Minimal instructions - let the agent be autonomous
                 # Add agent identification requirement and task completion requirement
-                interpreted_task = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
+                # CRITICAL: Add explicit restrictions against creating profiles/users
+                interpreted_task = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished.\n\nCRITICAL SAFETY: Do NOT create profiles, users, guest accounts, or any new user entities. Do NOT use tools that create users, profiles, or accounts. Only interact with existing channels/users that are explicitly provided (e.g., channel ID D025N5FN3RT). Do NOT use any user creation or profile management tools."
                 
                 self._update_progress("Anthropic Agent", "Interpreting and executing task...")
                 output_parts = []
@@ -333,7 +334,8 @@ class AgentRunner:
                         
                         # Minimal instructions - let the agent be autonomous
                         # Add agent identification requirement
-                        task_with_id = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
+                        # CRITICAL: Add explicit restrictions against creating profiles/users
+                        task_with_id = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'\n\nCRITICAL SAFETY: Do NOT create profiles, users, guest accounts, or any new user entities. Do NOT use tools that create users, profiles, or accounts. Only interact with existing channels/users that are explicitly provided (e.g., channel ID D025N5FN3RT). Do NOT use any user creation or profile management tools."
                         current_task = task_with_id
                         
                         # Initialize input lock if interactive prompting is enabled
@@ -543,7 +545,8 @@ class AgentRunner:
                 
                 # Minimal instructions - let the agent be autonomous
                 # Add agent identification requirement and task completion requirement
-                interpreted_task = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
+                # CRITICAL: Add explicit restrictions against creating profiles/users
+                interpreted_task = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished.\n\nCRITICAL SAFETY: Do NOT create profiles, users, guest accounts, or any new user entities. Do NOT use tools that create users, profiles, or accounts. Only interact with existing channels/users that are explicitly provided (e.g., channel ID D025N5FN3RT). Do NOT use any user creation or profile management tools."
                 
                 current_task = interpreted_task
                 
