@@ -12,9 +12,26 @@ NC='\033[0m' # No Color
 
 # Configuration
 MCP_URL="${MCP_URL:-https://ztaid-stkaeb2t-e4l2dawa5a-uc.a.run.app/mcp}"
+
+# Load safety constraints from agent_constraints.env if it exists
+if [ -f "agent_constraints.env" ]; then
+    source agent_constraints.env
+fi
+
+# Default values (can be overridden by agent_constraints.env or environment)
 CHANNEL_ID="${CHANNEL_ID:-D025N5FN3RT}"
+CHANNEL_TYPE="${CHANNEL_TYPE:-DM}"
+CHANNEL_DESCRIPTION="${CHANNEL_DESCRIPTION:-direct message channel}"
 BASE_TASK="${BASE_TASK:-Make a short post about color}"
-TASK="${TASK:-${BASE_TASK} to channel ${CHANNEL_ID} (DM only - this is a direct message channel). IMPORTANT: This is for testing/proof of concept only. You MUST post ONLY to this DM channel (${CHANNEL_ID}). Do NOT post to any public channels, general channels, or other channels. When posting messages or providing output, always prefix with your agent name (e.g., 'Anthropic Agent: ', 'Langchain Agent: ', 'OpenAI Agent: ') followed by your message. Keep your response short and concise. Limit your output so only the user can view it for personal understanding and learning. Thank you.}"
+
+# Safety instructions (from agent_constraints.env or defaults)
+SAFETY_INSTRUCTIONS="${SAFETY_INSTRUCTIONS:-IMPORTANT: This is for testing/proof of concept only. You MUST post ONLY to this DM channel (${CHANNEL_ID}). Do NOT post to any public channels, general channels, or other channels.}"
+AGENT_IDENTIFICATION="${AGENT_IDENTIFICATION:-When posting messages or providing output, always prefix with your agent name (e.g., 'Anthropic Agent: ', 'Langchain Agent: ', 'OpenAI Agent: ') followed by your message.}"
+RESPONSE_LENGTH="${RESPONSE_LENGTH:-Keep your response short and concise.}"
+RESPONSE_SCOPE="${RESPONSE_SCOPE:-Limit your output so only the user can view it for personal understanding and learning.}"
+
+# Build full task with all safety constraints
+TASK="${TASK:-${BASE_TASK} to channel ${CHANNEL_ID} (${CHANNEL_TYPE} only - this is a ${CHANNEL_DESCRIPTION}). ${SAFETY_INSTRUCTIONS} ${AGENT_IDENTIFICATION} ${RESPONSE_LENGTH} ${RESPONSE_SCOPE} Thank you.}"
 
 # Check for API keys
 if [ -z "$ANTHROPIC_API_KEY" ]; then
