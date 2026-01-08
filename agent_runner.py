@@ -28,7 +28,6 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.markdown import Markdown
 from rich.prompt import Prompt, Confirm
 from rich import box
-from rich.spinner import Spinner
 from rich.layout import Layout
 from rich.text import Text
 from threading import Lock
@@ -1336,12 +1335,13 @@ async def main():
             elapsed = (datetime.now() - self.start_time).total_seconds()
             elapsed_str = f"{elapsed:.1f}s"
             
-            # Create status rows for each agent
+            # Create status rows for each agent with proper spinner rendering
             rows = []
             for agent_name in self.agent_names:
                 status = self.statuses.get(agent_name, "Waiting...")
-                spinner = Spinner("dots", style="cyan")
-                rows.append(f"  {spinner} [bold cyan]{agent_name}:[/bold cyan] {status}")
+                # Use spinner emoji that animates, or use a simple icon
+                spinner_icon = "⏳"  # Hourglass emoji as spinner
+                rows.append(f"  {spinner_icon} [bold cyan]{agent_name}:[/bold cyan] {status}")
             
             content = "\n".join(rows)
             content += f"\n\n[dim]⏱  Elapsed: {elapsed_str}[/dim]"
