@@ -551,64 +551,8 @@ If a task seems to require creating new entities or taking actions outside the e
                 
                 current_task = interpreted_task
                 
-                # Execute task - with interactive prompting if enabled
+                # Execute task immediately - agent will ask questions during execution if needed
                 self._update_progress("OpenAI Agent", "Interpreting and executing task...")
-                
-                # For OpenAI agent, allow conversational clarification if interactive mode
-                if self.interactive_prompt:
-                    conversation_round = 0
-                    max_rounds = 5  # Limit conversation rounds
-                    
-                    while conversation_round < max_rounds:
-                        try:
-                            # Show original task and current state
-                            original_task_preview = task[:150] + "..." if len(task) > 150 else task
-                            
-                            if conversation_round == 0:
-                                prompt_text = f"[bold cyan]OpenAI Agent:[/bold cyan] I'm ready to work on your task.\n[dim]Original task: {original_task_preview}[/dim]\n[yellow]Do you have any clarifying questions for me, or should I proceed? (Enter to proceed, or type your question/clarification): [/yellow]"
-                            else:
-                                prompt_text = f"[bold cyan]OpenAI Agent:[/bold cyan] I have a follow-up question.\n[dim]Original task: {original_task_preview}[/dim]\n[yellow]Your response (Enter to proceed with current understanding): [/yellow]"
-                            
-                            user_input = await asyncio.to_thread(
-                                self.interactive_prompt,
-                                prompt_text
-                            )
-                            
-                            if not user_input or not user_input.strip():
-                                # User pressed Enter - proceed with current understanding
-                                break
-                            
-                            # Add user clarification
-                            clarification = user_input.strip()
-                            current_task = f"{current_task}\n\n[User clarification: {clarification}]"
-                            conversation_round += 1
-                            
-                            # Agent can ask follow-up or confirm
-                            if conversation_round < max_rounds:
-                                confirm_prompt = f"[bold cyan]OpenAI Agent:[/bold cyan] Thank you for the clarification.\n[dim]Current understanding: {current_task[:200]}...[/dim]\n[yellow]Any other questions, or should I proceed? (Enter to proceed, or type another question): [/yellow]"
-                                more_input = await asyncio.to_thread(
-                                    self.interactive_prompt,
-                                    confirm_prompt
-                                )
-                                if not more_input or not more_input.strip():
-                                    break
-                                current_task = f"{current_task}\n\n[User additional clarification: {more_input.strip()}]"
-                                conversation_round += 1
-                            
-                        except (EOFError, KeyboardInterrupt):
-                            break
-                    
-                    # Final confirmation before execution
-                    try:
-                        final_prompt = f"[bold cyan]OpenAI Agent:[/bold cyan] I understand the task. Ready to execute.\n[dim]Task: {current_task[:200]}...[/dim]\n[yellow]Proceed with execution? (Enter to start, or type any last-minute changes): [/yellow]"
-                        final_input = await asyncio.to_thread(
-                            self.interactive_prompt,
-                            final_prompt
-                        )
-                        if final_input and final_input.strip():
-                            current_task = f"{current_task}\n\n[Final user instruction: {final_input.strip()}]"
-                    except (EOFError, KeyboardInterrupt):
-                        pass
                 
                 # Execute agent (Runner.run is synchronous, so run in thread)
                 # Note: Runner.run might be async, check and handle both cases
