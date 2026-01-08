@@ -1397,10 +1397,15 @@ async def main():
             def update_loop():
                 while not self._stop_event.is_set():
                     try:
-                        if self._stop_event.wait(0.5):  # Wait 0.5 seconds or until stop
+                        # Wait 0.5 seconds, or break if event is set
+                        if self._stop_event.wait(0.5):
                             break
-                        if self.live and hasattr(self.live, 'is_started') and self.live.is_started:
-                            self.live.update(self.render())
+                        # Update the display with new elapsed time
+                        if self.live:
+                            try:
+                                self.live.update(self.render())
+                            except Exception:
+                                break
                     except Exception:
                         break
             self._update_thread = Thread(target=update_loop, daemon=True)
