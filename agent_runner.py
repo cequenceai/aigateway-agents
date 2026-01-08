@@ -135,7 +135,8 @@ class AgentRunner:
                 options = ClaudeAgentOptions(
                     mcp_servers=mcp_servers,
                     permission_mode="bypassPermissions",
-                    env={"ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY")}
+                    env={"ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY")},
+                    system="When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'"
                 )
                 step.finish()
                 
@@ -143,7 +144,8 @@ class AgentRunner:
                 timing_steps.append(step)
                 
                 # Minimal instructions - let the agent be autonomous
-                interpreted_task = task
+                # Add agent identification requirement to task
+                interpreted_task = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'"
                 
                 self._update_progress("Anthropic Agent", "Interpreting and executing task...")
                 output_parts = []
@@ -247,9 +249,9 @@ class AgentRunner:
                         self._update_progress("Langchain Agent", "Interpreting and executing task...")
                         
                         # Minimal instructions - let the agent be autonomous
-                        interpreted_task = task
-                        
-                        messages = [HumanMessage(content=interpreted_task)]
+                        # Add agent identification requirement
+                        task_with_id = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
+                        messages = [HumanMessage(content=task_with_id)]
                         # Add timeout to prevent hanging
                         try:
                             result = await asyncio.wait_for(
@@ -375,7 +377,7 @@ class AgentRunner:
                 model = os.environ.get("OPENAI_MODEL", "gpt-4o")
                 agent = Agent(
                     name="OpenAI Agent",
-                    instructions="You are an autonomous AI agent with access to MCP server tools. Use the available tools to complete tasks as requested.",
+                    instructions="You are an autonomous AI agent with access to MCP server tools. Use the available tools to complete tasks as requested. When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'",
                     model=model,
                     mcp_servers=[mcp_server]
                 )
@@ -385,7 +387,8 @@ class AgentRunner:
                 timing_steps.append(step)
                 
                 # Minimal instructions - let the agent be autonomous
-                interpreted_task = task
+                # Add agent identification requirement to task
+                interpreted_task = f"{task}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'"
                 
                 self._update_progress("OpenAI Agent", "Interpreting and executing task...")
                 result = await Runner.run(agent, interpreted_task)

@@ -12,7 +12,9 @@ NC='\033[0m' # No Color
 
 # Configuration
 MCP_URL="${MCP_URL:-https://ztaid-stkaeb2t-e4l2dawa5a-uc.a.run.app/mcp}"
-TASK="${TASK:-Make a post about color using the MCP server tools}"
+CHANNEL_ID="${CHANNEL_ID:-D025N5FN3RT}"
+BASE_TASK="${BASE_TASK:-Make a short post about color}"
+TASK="${TASK:-${BASE_TASK} to channel ${CHANNEL_ID}. Please do not post in public channels as this tool is for proof of concept. When deciding, limit your output so only the user can view it for personal understanding and learning. Thank you.}"
 
 # Check for API keys
 if [ -z "$ANTHROPIC_API_KEY" ]; then
@@ -44,9 +46,15 @@ run_agent() {
     
     cd "$(dirname "$0")"
     
+    # Add channel restriction to task
+    full_task="${TASK}"
+    if [[ "$full_task" != *"Please do not post in public channels"* ]]; then
+        full_task="${full_task} Please do not post in public channels as this tool is for proof of concept. When deciding, limit your output so only the user can view it for personal understanding and learning. Thank you."
+    fi
+    
     timeout 600 python3 agent_runner.py \
         --mcp-url "$MCP_URL" \
-        --task "$TASK" \
+        --task "$full_task" \
         --agents "$agent" \
         --no-interactive \
         > "$output_file" 2>&1
