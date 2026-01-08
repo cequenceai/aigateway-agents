@@ -188,38 +188,71 @@ If a task seems to require creating new entities or taking actions outside the e
                 #
                 # CRITICAL: Explicit target restriction - ONLY D025N5FN3RT on Slack
                 target_restriction = "CRITICAL: For ALL messages on Slack, you MUST use channel ID D025N5FN3RT. This is the ONLY channel you are allowed to use. Do NOT use any other channel ID. Do NOT search for users. Do NOT find users. Do NOT message anyone else. ONLY D025N5FN3RT. When using chatPostMessage or any messaging tool, the channel parameter MUST be 'D025N5FN3RT'. No exceptions."
-                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
+                
+                # Clarification instructions - agent determines if clarification is needed
+                clarification_instructions = """CLARIFICATION PROTOCOL: Before executing the task, analyze if the task is clear and complete. If the task is unclear, ambiguous, or missing critical information needed for execution, you MUST request clarification from the user.
+
+To request clarification, output exactly: "CLARIFICATION_NEEDED: [your specific question]"
+
+Examples:
+- If task says "send a message" but doesn't specify what message: "CLARIFICATION_NEEDED: What message should I send?"
+- If task says "post to channel" but doesn't specify which channel: "CLARIFICATION_NEEDED: Which channel should I post to?"
+- If task is clear and complete: Proceed directly with execution.
+
+After requesting clarification, wait for the user's response, then proceed with the clarified task. Only proceed with execution when you have all necessary information."""
+                
+                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
                 
                 self._update_progress("Anthropic Agent", "Interpreting and executing task...")
                 output_parts = []
                 message_count = 0
                 current_task = interpreted_task
                 
-                # Optional clarification step (user can press Enter to skip)
-                if self.interactive_prompt:
-                    try:
-                        task_preview = task[:150] + "..." if len(task) > 150 else task
-                        clarification_prompt = f"[bold cyan]Anthropic Agent:[/bold cyan] I'm ready to work on your task.\n[dim]Task: {task_preview}[/dim]\n[yellow]Any clarifications needed? (Press Enter to proceed, or type your clarification): [/yellow]"
-                        user_clarification = await asyncio.to_thread(
-                            self.interactive_prompt,
-                            clarification_prompt
-                        )
-                        if user_clarification and user_clarification.strip():
-                            current_task = f"{current_task}\n\n[User clarification: {user_clarification.strip()}]"
-                    except (EOFError, KeyboardInterrupt):
-                        pass
+                # Execute task - agent will request clarification if needed
+                clarification_rounds = 0
+                max_clarification_rounds = 3
                 
-                # Execute task
-                async for message in query(prompt=current_task, options=options):
-                    if hasattr(message, 'content'):
-                        for block in message.content:
-                            if hasattr(block, 'text'):
-                                output_parts.append(block.text)
-                                message_count += 1
-                                
-                                # Show progress in real-time
-                                if len(output_parts) > 0:
-                                    self._update_progress("Anthropic Agent", f"Working... ({message_count} messages)")
+                while clarification_rounds <= max_clarification_rounds:
+                    agent_output = ""
+                    async for message in query(prompt=current_task, options=options):
+                        if hasattr(message, 'content'):
+                            for block in message.content:
+                                if hasattr(block, 'text'):
+                                    text = block.text
+                                    output_parts.append(text)
+                                    agent_output += text
+                                    message_count += 1
+                                    
+                                    # Show progress in real-time
+                                    if len(output_parts) > 0:
+                                        self._update_progress("Anthropic Agent", f"Working... ({message_count} messages)")
+                    
+                    # Check if agent requested clarification
+                    if "CLARIFICATION_NEEDED:" in agent_output and self.interactive_prompt:
+                        # Extract the question
+                        clarification_match = agent_output.split("CLARIFICATION_NEEDED:")[-1].strip()
+                        if clarification_match:
+                            # Show agent's question and get user response
+                            try:
+                                clarification_prompt = f"[bold cyan]Anthropic Agent asks:[/bold cyan] {clarification_match}\n[yellow]Your response: [/yellow]"
+                                user_response = await asyncio.to_thread(
+                                    self.interactive_prompt,
+                                    clarification_prompt
+                                )
+                                if user_response and user_response.strip():
+                                    # Add clarification to task and continue
+                                    current_task = f"{current_task}\n\n[User clarification: {user_response.strip()}]"
+                                    clarification_rounds += 1
+                                    # Continue loop to re-execute with clarification
+                                    continue
+                                else:
+                                    # User pressed Enter - proceed anyway
+                                    break
+                            except (EOFError, KeyboardInterrupt):
+                                break
+                    
+                    # No clarification needed or max rounds reached - break
+                    break
                 
                 step.finish()
                 
@@ -359,30 +392,82 @@ If a task seems to require creating new entities or taking actions outside the e
                         task_with_id = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
                         current_task = task_with_id
                         
-                        # Execute task immediately - agent will ask questions during execution if needed
-                        messages = [HumanMessage(content=current_task)]
+                        # Clarification instructions - agent determines if clarification is needed
+                        clarification_instructions = """CLARIFICATION PROTOCOL: Before executing the task, analyze if the task is clear and complete. If the task is unclear, ambiguous, or missing critical information needed for execution, you MUST request clarification from the user.
+
+To request clarification, output exactly: "CLARIFICATION_NEEDED: [your specific question]"
+
+Examples:
+- If task says "send a message" but doesn't specify what message: "CLARIFICATION_NEEDED: What message should I send?"
+- If task says "post to channel" but doesn't specify which channel: "CLARIFICATION_NEEDED: Which channel should I post to?"
+- If task is clear and complete: Proceed directly with execution.
+
+After requesting clarification, wait for the user's response, then proceed with the clarified task. Only proceed with execution when you have all necessary information."""
                         
-                        # Add timeout to prevent hanging - reduced for faster execution
-                        try:
-                            result = await asyncio.wait_for(
-                                agent.ainvoke({"messages": messages}),
-                                timeout=60.0  # 1 minute timeout - faster execution
-                            )
-                        except asyncio.TimeoutError:
-                            output_parts.append("Error: Agent execution timed out after 1 minute")
-                            raise TimeoutError("Langchain agent execution timed out")
+                        task_with_id = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
+                        current_task = task_with_id
+                        
+                        # Execute task - agent will request clarification if needed
+                        clarification_rounds = 0
+                        max_clarification_rounds = 3
+                        
+                        while clarification_rounds <= max_clarification_rounds:
+                            messages = [HumanMessage(content=current_task)]
+                            
+                            # Add timeout to prevent hanging - reduced for faster execution
+                            try:
+                                result = await asyncio.wait_for(
+                                    agent.ainvoke({"messages": messages}),
+                                    timeout=60.0  # 1 minute timeout - faster execution
+                                )
+                            except asyncio.TimeoutError:
+                                output_parts.append("Error: Agent execution timed out after 1 minute")
+                                raise TimeoutError("Langchain agent execution timed out")
+                            
+                            # Collect agent output
+                            agent_output = ""
+                            if "messages" in result:
+                                for msg in result["messages"]:
+                                    if hasattr(msg, 'content'):
+                                        content = str(msg.content)
+                                        output_parts.append(content)
+                                        agent_output += content
+                                    else:
+                                        output_parts.append(str(msg))
+                                        agent_output += str(msg)
+                            else:
+                                output_parts.append(str(result))
+                                agent_output = str(result)
+                            
+                            # Check if agent requested clarification
+                            if "CLARIFICATION_NEEDED:" in agent_output and self.interactive_prompt:
+                                # Extract the question
+                                clarification_match = agent_output.split("CLARIFICATION_NEEDED:")[-1].strip()
+                                if clarification_match:
+                                    # Show agent's question and get user response
+                                    try:
+                                        clarification_prompt = f"[bold cyan]Langchain Agent asks:[/bold cyan] {clarification_match}\n[yellow]Your response: [/yellow]"
+                                        user_response = await asyncio.to_thread(
+                                            self.interactive_prompt,
+                                            clarification_prompt
+                                        )
+                                        if user_response and user_response.strip():
+                                            # Add clarification to task and continue
+                                            current_task = f"{current_task}\n\n[User clarification: {user_response.strip()}]"
+                                            clarification_rounds += 1
+                                            # Continue loop to re-execute with clarification
+                                            continue
+                                        else:
+                                            # User pressed Enter - proceed anyway
+                                            break
+                                    except (EOFError, KeyboardInterrupt):
+                                        break
+                            
+                            # No clarification needed or max rounds reached - break
+                            break
                         
                         if exec_step:
                             exec_step.finish()
-                        
-                        if "messages" in result:
-                            for msg in result["messages"]:
-                                if hasattr(msg, 'content'):
-                                    output_parts.append(str(msg.content))
-                                else:
-                                    output_parts.append(str(msg))
-                        else:
-                            output_parts.append(str(result))
                     except Exception as e:
                         if exec_step:
                             exec_step.finish()
@@ -545,43 +630,89 @@ If a task seems to require creating new entities or taking actions outside the e
                 #
                 # CRITICAL: Explicit target restriction - ONLY D025N5FN3RT on Slack
                 target_restriction = "CRITICAL: For ALL messages on Slack, you MUST use channel ID D025N5FN3RT. This is the ONLY channel you are allowed to use. Do NOT use any other channel ID. Do NOT search for users. Do NOT find users. Do NOT message anyone else. ONLY D025N5FN3RT. When using chatPostMessage or any messaging tool, the channel parameter MUST be 'D025N5FN3RT'. No exceptions."
-                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
+                
+                # Clarification instructions - agent determines if clarification is needed
+                clarification_instructions = """CLARIFICATION PROTOCOL: Before executing the task, analyze if the task is clear and complete. If the task is unclear, ambiguous, or missing critical information needed for execution, you MUST request clarification from the user.
+
+To request clarification, output exactly: "CLARIFICATION_NEEDED: [your specific question]"
+
+Examples:
+- If task says "send a message" but doesn't specify what message: "CLARIFICATION_NEEDED: What message should I send?"
+- If task says "post to channel" but doesn't specify which channel: "CLARIFICATION_NEEDED: Which channel should I post to?"
+- If task is clear and complete: Proceed directly with execution.
+
+After requesting clarification, wait for the user's response, then proceed with the clarified task. Only proceed with execution when you have all necessary information."""
+                
+                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
                 
                 current_task = interpreted_task
                 
-                # Optional clarification step (user can press Enter to skip)
-                if self.interactive_prompt:
-                    try:
-                        task_preview = task[:150] + "..." if len(task) > 150 else task
-                        clarification_prompt = f"[bold cyan]OpenAI Agent:[/bold cyan] I'm ready to work on your task.\n[dim]Task: {task_preview}[/dim]\n[yellow]Any clarifications needed? (Press Enter to proceed, or type your clarification): [/yellow]"
-                        user_clarification = await asyncio.to_thread(
-                            self.interactive_prompt,
-                            clarification_prompt
-                        )
-                        if user_clarification and user_clarification.strip():
-                            current_task = f"{current_task}\n\n[User clarification: {user_clarification.strip()}]"
-                    except (EOFError, KeyboardInterrupt):
-                        pass
-                
-                # Execute task
+                # Execute task - agent will request clarification if needed
                 self._update_progress("OpenAI Agent", "Interpreting and executing task...")
                 
-                # Execute agent (Runner.run is synchronous, so run in thread)
-                # Note: Runner.run might be async, check and handle both cases
-                try:
-                    # Try as async first
-                    if asyncio.iscoroutinefunction(Runner.run):
-                        result = await Runner.run(agent, current_task)
-                    else:
+                clarification_rounds = 0
+                max_clarification_rounds = 3
+                agent_output = ""
+                
+                while clarification_rounds <= max_clarification_rounds:
+                    # Execute agent (Runner.run is synchronous, so run in thread)
+                    # Note: Runner.run might be async, check and handle both cases
+                    try:
+                        # Try as async first
+                        if asyncio.iscoroutinefunction(Runner.run):
+                            result = await Runner.run(agent, current_task)
+                        else:
+                            result = await asyncio.to_thread(Runner.run, agent, current_task)
+                    except TypeError:
+                        # Fallback to thread if it's not async
                         result = await asyncio.to_thread(Runner.run, agent, current_task)
-                except TypeError:
-                    # Fallback to thread if it's not async
-                    result = await asyncio.to_thread(Runner.run, agent, current_task)
+                    
+                    # Collect output
+                    if hasattr(result, 'final_output') and result.final_output:
+                        output = result.final_output
+                        output_parts.append(output)
+                        agent_output += output
+                    elif hasattr(result, 'output'):
+                        output = str(result.output)
+                        output_parts.append(output)
+                        agent_output += output
+                    else:
+                        output = str(result)
+                        output_parts.append(output)
+                        agent_output += output
+                    
+                    # Check if agent requested clarification
+                    if "CLARIFICATION_NEEDED:" in agent_output and self.interactive_prompt:
+                        # Extract the question
+                        clarification_match = agent_output.split("CLARIFICATION_NEEDED:")[-1].strip()
+                        if clarification_match:
+                            # Show agent's question and get user response
+                            try:
+                                clarification_prompt = f"[bold cyan]OpenAI Agent asks:[/bold cyan] {clarification_match}\n[yellow]Your response: [/yellow]"
+                                user_response = await asyncio.to_thread(
+                                    self.interactive_prompt,
+                                    clarification_prompt
+                                )
+                                if user_response and user_response.strip():
+                                    # Add clarification to task and continue
+                                    current_task = f"{current_task}\n\n[User clarification: {user_response.strip()}]"
+                                    clarification_rounds += 1
+                                    agent_output = ""  # Reset for next round
+                                    # Continue loop to re-execute with clarification
+                                    continue
+                                else:
+                                    # User pressed Enter - proceed anyway
+                                    break
+                            except (EOFError, KeyboardInterrupt):
+                                break
+                    
+                    # No clarification needed or max rounds reached - break
+                    break
                 
                 step.finish()
                 
                 execution_time = (datetime.now() - start_time).total_seconds()
-                output = result.final_output if result and result.final_output else "No output"
+                output = agent_output if agent_output else (result.final_output if result and hasattr(result, 'final_output') and result.final_output else "No output")
                 
                 await mcp_server.cleanup()
                 
