@@ -30,12 +30,13 @@ SAFETY_INSTRUCTIONS="${SAFETY_INSTRUCTIONS:-IMPORTANT: This is for testing/proof
 NO_PUBLIC_POSTS="${NO_PUBLIC_POSTS:-Do not post in public channels, public spaces, or public forums.}"
 NO_OTHER_USERS="${NO_OTHER_USERS:-Do not message others, do not bother others, do not interact with others.}"
 LOCAL_ONLY="${LOCAL_ONLY:-Operate in local/private mode only. All interactions should be with the system owner/user only.}"
+TASK_COMPLETION="${TASK_COMPLETION:-CRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps (find user, get information, send message, etc.) - do ALL of them. Only report completion when the task is truly finished. If you need to search for information or interact with tools multiple times, do so until the task objective is achieved.}"
 AGENT_IDENTIFICATION="${AGENT_IDENTIFICATION:-When posting messages or providing output, always prefix with your agent name (e.g., 'Anthropic Agent: ', 'Langchain Agent: ', 'OpenAI Agent: ') followed by your message.}"
 RESPONSE_LENGTH="${RESPONSE_LENGTH:-Keep your response short and concise.}"
 RESPONSE_SCOPE="${RESPONSE_SCOPE:-Limit your output so only the user can view it for personal understanding and learning.}"
 
 # Build full task with all safety constraints
-TASK="${TASK:-${BASE_TASK} to ${TARGET_DESCRIPTION} ${TARGET_IDENTIFIER}. ${SAFETY_INSTRUCTIONS} ${NO_PUBLIC_POSTS} ${NO_OTHER_USERS} ${LOCAL_ONLY} ${AGENT_IDENTIFICATION} ${RESPONSE_LENGTH} ${RESPONSE_SCOPE} Thank you.}"
+TASK="${TASK:-${BASE_TASK} to ${TARGET_DESCRIPTION} ${TARGET_IDENTIFIER}. ${SAFETY_INSTRUCTIONS} ${NO_PUBLIC_POSTS} ${NO_OTHER_USERS} ${LOCAL_ONLY} ${TASK_COMPLETION} ${AGENT_IDENTIFICATION} ${RESPONSE_LENGTH} ${RESPONSE_SCOPE} Thank you.}"
 
 # Check for API keys
 if [ -z "$ANTHROPIC_API_KEY" ]; then
