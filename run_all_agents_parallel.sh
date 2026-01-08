@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 MCP_URL="${MCP_URL:-https://ztaid-stkaeb2t-e4l2dawa5a-uc.a.run.app/mcp}"
 CHANNEL_ID="${CHANNEL_ID:-D025N5FN3RT}"
 BASE_TASK="${BASE_TASK:-Make a short post about color}"
-TASK="${TASK:-${BASE_TASK} to channel ${CHANNEL_ID}. Please do not post in public channels as this tool is for proof of concept. When deciding, limit your output so only the user can view it for personal understanding and learning. Thank you.}"
+TASK="${TASK:-${BASE_TASK} to channel ${CHANNEL_ID} (DM only - this is a direct message channel). IMPORTANT: This is for testing/proof of concept only. You MUST post ONLY to this DM channel (${CHANNEL_ID}). Do NOT post to any public channels, general channels, or other channels. When posting messages or providing output, always prefix with your agent name (e.g., 'Anthropic Agent: ', 'Langchain Agent: ', 'OpenAI Agent: ') followed by your message. Keep your response short and concise. Limit your output so only the user can view it for personal understanding and learning. Thank you.}"
 
 # Check for API keys
 if [ -z "$ANTHROPIC_API_KEY" ]; then
@@ -46,15 +46,9 @@ run_agent() {
     
     cd "$(dirname "$0")"
     
-    # Add channel restriction to task
-    full_task="${TASK}"
-    if [[ "$full_task" != *"Please do not post in public channels"* ]]; then
-        full_task="${full_task} Please do not post in public channels as this tool is for proof of concept. When deciding, limit your output so only the user can view it for personal understanding and learning. Thank you."
-    fi
-    
     timeout 600 python3 agent_runner.py \
         --mcp-url "$MCP_URL" \
-        --task "$full_task" \
+        --task "$TASK" \
         --agents "$agent" \
         --no-interactive \
         > "$output_file" 2>&1
