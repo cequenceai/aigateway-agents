@@ -195,7 +195,21 @@ If a task seems to require creating new entities or taking actions outside the e
                 message_count = 0
                 current_task = interpreted_task
                 
-                # Execute task immediately - no pre-execution prompts
+                # Optional clarification step (user can press Enter to skip)
+                if self.interactive_prompt:
+                    try:
+                        task_preview = task[:150] + "..." if len(task) > 150 else task
+                        clarification_prompt = f"[bold cyan]Anthropic Agent:[/bold cyan] I'm ready to work on your task.\n[dim]Task: {task_preview}[/dim]\n[yellow]Any clarifications needed? (Press Enter to proceed, or type your clarification): [/yellow]"
+                        user_clarification = await asyncio.to_thread(
+                            self.interactive_prompt,
+                            clarification_prompt
+                        )
+                        if user_clarification and user_clarification.strip():
+                            current_task = f"{current_task}\n\n[User clarification: {user_clarification.strip()}]"
+                    except (EOFError, KeyboardInterrupt):
+                        pass
+                
+                # Execute task
                 async for message in query(prompt=current_task, options=options):
                     if hasattr(message, 'content'):
                         for block in message.content:
@@ -535,7 +549,21 @@ If a task seems to require creating new entities or taking actions outside the e
                 
                 current_task = interpreted_task
                 
-                # Execute task immediately - agent will ask questions during execution if needed
+                # Optional clarification step (user can press Enter to skip)
+                if self.interactive_prompt:
+                    try:
+                        task_preview = task[:150] + "..." if len(task) > 150 else task
+                        clarification_prompt = f"[bold cyan]OpenAI Agent:[/bold cyan] I'm ready to work on your task.\n[dim]Task: {task_preview}[/dim]\n[yellow]Any clarifications needed? (Press Enter to proceed, or type your clarification): [/yellow]"
+                        user_clarification = await asyncio.to_thread(
+                            self.interactive_prompt,
+                            clarification_prompt
+                        )
+                        if user_clarification and user_clarification.strip():
+                            current_task = f"{current_task}\n\n[User clarification: {user_clarification.strip()}]"
+                    except (EOFError, KeyboardInterrupt):
+                        pass
+                
+                # Execute task
                 self._update_progress("OpenAI Agent", "Interpreting and executing task...")
                 
                 # Execute agent (Runner.run is synchronous, so run in thread)
