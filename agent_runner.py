@@ -351,9 +351,12 @@ If a task seems to require creating new entities or taking actions outside the e
                         # If interactive prompt enabled, allow user input before execution
                         if self.interactive_prompt:
                             try:
+                                # Show context: what task the agent is about to work on
+                                task_preview = current_task[:100] + "..." if len(current_task) > 100 else current_task
+                                prompt_text = f"[yellow]Langchain Agent ready to work on:[/yellow]\n[dim]{task_preview}[/dim]\n[yellow]Type additional instruction (Enter to start): [/yellow]"
                                 user_input = await asyncio.to_thread(
                                     self.interactive_prompt,
-                                    "[yellow]Langchain Agent ready... Type additional instruction (Enter to start): [/yellow]"
+                                    prompt_text
                                 )
                                 if user_input and user_input.strip():
                                     current_task = f"{current_task}\n\n[User additional instruction: {user_input.strip()}]"
@@ -555,9 +558,12 @@ If a task seems to require creating new entities or taking actions outside the e
                 if self.interactive_prompt:
                     # Wait for user input before starting
                     try:
+                        # Show context: what task the agent is about to work on
+                        task_preview = current_task[:100] + "..." if len(current_task) > 100 else current_task
+                        prompt_text = f"[yellow]OpenAI Agent ready to work on:[/yellow]\n[dim]{task_preview}[/dim]\n[yellow]Type additional instruction (Enter to start): [/yellow]"
                         user_input = await asyncio.to_thread(
                             self.interactive_prompt,
-                            "[yellow]OpenAI Agent ready... Type additional instruction (Enter to start): [/yellow]"
+                            prompt_text
                         )
                         if user_input and user_input.strip():
                             current_task = f"{current_task}\n\n[User additional instruction: {user_input.strip()}]"
@@ -673,11 +679,13 @@ If a task seems to require creating new entities or taking actions outside the e
                             timeout=1.0
                         )
                         
-                        # Get user input
+                        # Get user input with context
                         try:
+                            # Show context about what agent is doing
+                            context_prompt = f"[yellow][{agent_name}][/yellow]\n[dim]Requesting input during execution...[/dim]\n[yellow]{prompt_text}[/yellow]"
                             user_input = await asyncio.to_thread(
                                 original_prompt_for_handler,
-                                f"[yellow][{agent_name}] {prompt_text}[/yellow]"
+                                context_prompt
                             )
                             self.input_responses[agent_name] = user_input or ""
                         except (EOFError, KeyboardInterrupt):
@@ -1083,9 +1091,13 @@ async def main():
     interactive_prompt_fn = None
     if is_interactive() and not args.no_interactive:
         def get_user_input(prompt_text: str) -> str:
-            """Get user input during agent execution."""
+            """Get user input during agent execution with context."""
             try:
-                return console.input(f"[yellow]{prompt_text}[/yellow]")
+                # Print the prompt (which may include multi-line context)
+                console.print()  # New line for clarity
+                console.print(prompt_text)
+                # Get input on next line
+                return console.input()
             except (EOFError, KeyboardInterrupt):
                 return ""
         interactive_prompt_fn = get_user_input
