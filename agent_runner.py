@@ -30,7 +30,7 @@ from rich.prompt import Prompt, Confirm
 from rich import box
 from rich.layout import Layout
 from rich.text import Text
-from threading import Lock
+from threading import Lock, Thread, Event
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -1384,12 +1384,34 @@ async def main():
                         self.live.update(self.render())
         
         def start(self):
-            """Start the live display."""
-            self.live = Live(self.render(), console=console, refresh_per_second=4, vertical_overflow="visible")
+            """Start the live display with auto-refresh for elapsed time."""
+            self._stop_event = Event()
+            self.live = Live(
+                self.render(), 
+                console=console, 
+                refresh_per_second=2,  # Update every 0.5 seconds for smooth elapsed time
+                vertical_overflow="visible"
+            )
             self.live.start()
+            # Start background thread to continuously update elapsed time
+            def update_loop():
+                while not self._stop_event.is_set():
+                    try:
+                        if self._stop_event.wait(0.5):  # Wait 0.5 seconds or until stop
+                            break
+                        if self.live and hasattr(self.live, 'is_started') and self.live.is_started:
+                            self.live.update(self.render())
+                    except Exception:
+                        break
+            self._update_thread = Thread(target=update_loop, daemon=True)
+            self._update_thread.start()
         
         def stop(self):
             """Stop the live display."""
+            if hasattr(self, '_stop_event'):
+                self._stop_event.set()
+            if hasattr(self, '_update_thread'):
+                self._update_thread.join(timeout=1.0)  # Wait up to 1 second for thread to finish
             if self.live:
                 self.live.stop()
                 self.live = None
