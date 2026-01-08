@@ -345,24 +345,8 @@ If a task seems to require creating new entities or taking actions outside the e
                         task_with_id = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
                         current_task = task_with_id
                         
-                        # Execute task - with interactive prompting if enabled
+                        # Execute task immediately - agent will ask questions during execution if needed
                         messages = [HumanMessage(content=current_task)]
-                        
-                        # If interactive prompt enabled, allow user input before execution
-                        if self.interactive_prompt:
-                            try:
-                                # Show context: what task the agent is about to work on
-                                task_preview = current_task[:100] + "..." if len(current_task) > 100 else current_task
-                                prompt_text = f"[yellow]Langchain Agent ready to work on:[/yellow]\n[dim]{task_preview}[/dim]\n[yellow]Type additional instruction (Enter to start): [/yellow]"
-                                user_input = await asyncio.to_thread(
-                                    self.interactive_prompt,
-                                    prompt_text
-                                )
-                                if user_input and user_input.strip():
-                                    current_task = f"{current_task}\n\n[User additional instruction: {user_input.strip()}]"
-                                    messages = [HumanMessage(content=current_task)]
-                            except (EOFError, KeyboardInterrupt):
-                                pass
                         
                         # Add timeout to prevent hanging - reduced for faster execution
                         try:
