@@ -146,11 +146,19 @@ class AgentRunner:
                 step = TimingStep("Agent Initialization", datetime.now())
                 timing_steps.append(step)
                 self._update_progress("Anthropic Agent", "Initializing Claude Agent...")
-                options = ClaudeAgentOptions(
-                    mcp_servers=mcp_servers,
-                    permission_mode="bypassPermissions",
-                    env={"ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY")}
-                )
+                # Set temperature if provided
+                options_kwargs = {
+                    "mcp_servers": mcp_servers,
+                    "permission_mode": "bypassPermissions",
+                    "env": {"ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY")}
+                }
+                # Temperature control (if supported by SDK)
+                if self.temperature is not None:
+                    try:
+                        options_kwargs["temperature"] = self.temperature
+                    except:
+                        pass  # Ignore if not supported
+                options = ClaudeAgentOptions(**options_kwargs)
                 step.finish()
                 
                 step = TimingStep("Task Execution", datetime.now())
@@ -173,9 +181,13 @@ If a task seems to require creating new entities or taking actions outside the e
                 
                 # Minimal instructions - let the agent be autonomous
                 # Add agent identification requirement and task completion requirement
+                #
+                # User reference instructions
+                user_reference = "IMPORTANT: When the task refers to 'me', 'myself', 'I', or 'the user', you should interpret this as referring to 'the user', 'self', or 'the system owner'. All messages, information, and outputs should be directed to the user (self). When the task says 'send to me' or 'DM me', it means send to the user (self) via the specified channel."
+                #
                 # CRITICAL: Explicit target restriction - ONLY D025N5FN3RT on Slack
                 target_restriction = "CRITICAL: For ALL messages on Slack, you MUST use channel ID D025N5FN3RT. This is the ONLY channel you are allowed to use. Do NOT use any other channel ID. Do NOT search for users. Do NOT find users. Do NOT message anyone else. ONLY D025N5FN3RT. When using chatPostMessage or any messaging tool, the channel parameter MUST be 'D025N5FN3RT'. No exceptions."
-                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
+                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
                 
                 self._update_progress("Anthropic Agent", "Interpreting and executing task...")
                 output_parts = []
