@@ -19,19 +19,23 @@ if [ -f "agent_constraints.env" ]; then
 fi
 
 # Default values (can be overridden by agent_constraints.env or environment)
-CHANNEL_ID="${CHANNEL_ID:-D025N5FN3RT}"
-CHANNEL_TYPE="${CHANNEL_TYPE:-DM}"
-CHANNEL_DESCRIPTION="${CHANNEL_DESCRIPTION:-direct message channel}"
+INTERACTION_SCOPE="${INTERACTION_SCOPE:-local}"
+INTERACTION_DESCRIPTION="${INTERACTION_DESCRIPTION:-only interact with myself}"
+TARGET_IDENTIFIER="${TARGET_IDENTIFIER:-D025N5FN3RT}"
+TARGET_DESCRIPTION="${TARGET_DESCRIPTION:-direct message channel}"
 BASE_TASK="${BASE_TASK:-Make a short post about color}"
 
 # Safety instructions (from agent_constraints.env or defaults)
-SAFETY_INSTRUCTIONS="${SAFETY_INSTRUCTIONS:-IMPORTANT: This is for testing/proof of concept only. You MUST post ONLY to this DM channel (${CHANNEL_ID}). Do NOT post to any public channels, general channels, or other channels.}"
+SAFETY_INSTRUCTIONS="${SAFETY_INSTRUCTIONS:-IMPORTANT: This is for testing/proof of concept only. You MUST operate in ${INTERACTION_SCOPE} mode (${INTERACTION_DESCRIPTION}). Do NOT post in public. Do NOT message others. Do NOT bother others. Do NOT interact with others. Only interact with the user/owner of this system.}"
+NO_PUBLIC_POSTS="${NO_PUBLIC_POSTS:-Do not post in public channels, public spaces, or public forums.}"
+NO_OTHER_USERS="${NO_OTHER_USERS:-Do not message others, do not bother others, do not interact with others.}"
+LOCAL_ONLY="${LOCAL_ONLY:-Operate in local/private mode only. All interactions should be with the system owner/user only.}"
 AGENT_IDENTIFICATION="${AGENT_IDENTIFICATION:-When posting messages or providing output, always prefix with your agent name (e.g., 'Anthropic Agent: ', 'Langchain Agent: ', 'OpenAI Agent: ') followed by your message.}"
 RESPONSE_LENGTH="${RESPONSE_LENGTH:-Keep your response short and concise.}"
 RESPONSE_SCOPE="${RESPONSE_SCOPE:-Limit your output so only the user can view it for personal understanding and learning.}"
 
 # Build full task with all safety constraints
-TASK="${TASK:-${BASE_TASK} to channel ${CHANNEL_ID} (${CHANNEL_TYPE} only - this is a ${CHANNEL_DESCRIPTION}). ${SAFETY_INSTRUCTIONS} ${AGENT_IDENTIFICATION} ${RESPONSE_LENGTH} ${RESPONSE_SCOPE} Thank you.}"
+TASK="${TASK:-${BASE_TASK} to ${TARGET_DESCRIPTION} ${TARGET_IDENTIFIER}. ${SAFETY_INSTRUCTIONS} ${NO_PUBLIC_POSTS} ${NO_OTHER_USERS} ${LOCAL_ONLY} ${AGENT_IDENTIFICATION} ${RESPONSE_LENGTH} ${RESPONSE_SCOPE} Thank you.}"
 
 # Check for API keys
 if [ -z "$ANTHROPIC_API_KEY" ]; then
