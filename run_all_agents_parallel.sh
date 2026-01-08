@@ -23,7 +23,7 @@ INTERACTION_SCOPE="${INTERACTION_SCOPE:-local}"
 INTERACTION_DESCRIPTION="${INTERACTION_DESCRIPTION:-only interact with myself}"
 TARGET_IDENTIFIER="${TARGET_IDENTIFIER:-D025N5FN3RT}"
 TARGET_DESCRIPTION="${TARGET_DESCRIPTION:-direct message channel}"
-BASE_TASK="${BASE_TASK:-Make a short post about color}"
+BASE_TASK="${BASE_TASK:-Make a short post about your favorite color (you choose)}"
 
 # Safety instructions (from agent_constraints.env or defaults)
 SAFETY_INSTRUCTIONS="${SAFETY_INSTRUCTIONS:-IMPORTANT: This is for testing/proof of concept only. You MUST operate in ${INTERACTION_SCOPE} mode (${INTERACTION_DESCRIPTION}). Do NOT post in public. Do NOT message others. Do NOT bother others. Do NOT interact with others. Only interact with the user/owner of this system.}"

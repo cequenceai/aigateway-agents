@@ -723,8 +723,14 @@ async def main():
         sys.exit(1)
     else:
         # Always try interactive mode - let it fail gracefully if not available
-        console.print("[bold]Enter the task for the agents:[/bold]")
-        console.print("[dim]Example: 'List all available tools from the MCP server'[/dim]")
+        console.print("[bold]Enter the task for the agents (they pick the color):[/bold]")
+        console.print("[dim]Examples:[/dim]")
+        console.print("[dim]- \"Make a short post about your favorite color (you choose) to the DM target\"[/dim]")
+        console.print("[dim]- \"List available tools, then do a DM-only action using them\"[/dim]")
+        console.print("[dim]- \"Summarize the latest messages in the DM channel\"[/dim]")
+        console.print()
+        console.print("[yellow]Safety reminder:[/yellow] Agents run in DM-only mode, must prefix with their agent name, must not post in public, and should keep responses short.")
+        console.print("[yellow]Tip:[/yellow] Use --task/--agents flags for non-interactive runs; interactive mode simply takes the sentence you type here.")
         console.print()
         try:
             task = console.input("[bold cyan]Task: [/bold cyan]")
