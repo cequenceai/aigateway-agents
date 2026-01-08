@@ -432,8 +432,9 @@ Before executing, determine:
 
 IMPORTANT: If this task involves sending a message (DM, channel message, etc.):
 - You MUST prefix the message with "OpenAI Agent: " to identify which agent sent it
-- You MUST actually execute the task - find the user, send the message, don't just explain what you would do
-- Use usersList tool to find the user, then use chatPostMessage to send the message
+- You MUST actually execute the task - find the user using usersList, then send the message using chatPostMessage
+- If you can't find the exact name, search for similar names (e.g., "Abhinav" or "Allam") and use the closest match
+- Don't just explain what you would do - actually send the message
 
 If the task is completable, proceed with execution. If not, explain why it cannot be completed.
 
