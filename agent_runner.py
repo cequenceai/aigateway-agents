@@ -142,24 +142,8 @@ class AgentRunner:
                 step = TimingStep("Task Execution", datetime.now())
                 timing_steps.append(step)
                 
-                # Enhanced task with interpretation instructions
-                interpreted_task = f"""First, analyze this task: "{task}"
-
-Before executing, determine:
-1. Is this task completable with the available MCP server tools?
-2. What tools would be needed to complete this task?
-3. If the task cannot be completed, clearly state why before attempting to query the server.
-
-IMPORTANT: 
-- You MUST actually execute the task using the available MCP tools - do not just describe what you would do
-- You MUST call the appropriate MCP tools to complete the task
-- You MUST verify the task was completed successfully by checking the tool response
-- If you need to identify yourself in any output, prefix it with "Anthropic Agent: "
-- Do not report success unless you actually received a successful response from the MCP tool(s)
-
-If the task is completable, proceed with execution. If not, explain why it cannot be completed.
-
-Task: {task}"""
+                # Minimal instructions - let the agent be autonomous
+                interpreted_task = task
                 
                 self._update_progress("Anthropic Agent", "Interpreting and executing task...")
                 output_parts = []
@@ -262,24 +246,8 @@ Task: {task}"""
                         timing_steps.append(exec_step)
                         self._update_progress("Langchain Agent", "Interpreting and executing task...")
                         
-                        # Enhanced task with interpretation instructions
-                        interpreted_task = f"""First, analyze this task: "{task}"
-
-Before executing, determine:
-1. Is this task completable with the available MCP server tools?
-2. What tools would be needed to complete this task?
-3. If the task cannot be completed, clearly state why before attempting to query the server.
-
-IMPORTANT:
-- You MUST actually execute the task using the available MCP tools - do not just describe what you would do
-- You MUST call the appropriate MCP tools to complete the task
-- You MUST verify the task was completed successfully by checking the tool response
-- If you need to identify yourself in any output, prefix it with "Langchain Agent: "
-- Do not report success unless you actually received a successful response from the MCP tool(s)
-
-If the task is completable, proceed with execution. If not, explain why it cannot be completed.
-
-Task: {task}"""
+                        # Minimal instructions - let the agent be autonomous
+                        interpreted_task = task
                         
                         messages = [HumanMessage(content=interpreted_task)]
                         # Add timeout to prevent hanging
@@ -407,17 +375,7 @@ Task: {task}"""
                 model = os.environ.get("OPENAI_MODEL", "gpt-4o")
                 agent = Agent(
                     name="OpenAI Agent",
-                    instructions="""You are a helpful assistant with access to MCP server tools. 
-
-Before executing any task, you must:
-1. Analyze if the task is completable with available MCP server tools
-2. Identify what tools would be needed
-3. If the task cannot be completed, clearly state why BEFORE attempting to query the server
-4. Only proceed with execution if the task is completable
-
-IMPORTANT: If this task involves sending a message (DM, channel message, etc.), you MUST prefix the message with "OpenAI Agent: " to identify which agent sent it.
-
-Be clear and honest about task feasibility.""",
+                    instructions="You are an autonomous AI agent with access to MCP server tools. Use the available tools to complete tasks as requested.",
                     model=model,
                     mcp_servers=[mcp_server]
                 )
@@ -426,24 +384,8 @@ Be clear and honest about task feasibility.""",
                 step = TimingStep("Task Execution", datetime.now())
                 timing_steps.append(step)
                 
-                # Enhanced task with interpretation instructions
-                interpreted_task = f"""First, analyze this task: "{task}"
-
-Before executing, determine:
-1. Is this task completable with the available MCP server tools?
-2. What tools would be needed to complete this task?
-3. If the task cannot be completed, clearly state why before attempting to query the server.
-
-IMPORTANT:
-- You MUST actually execute the task using the available MCP tools - do not just describe what you would do
-- You MUST call the appropriate MCP tools to complete the task
-- You MUST verify the task was completed successfully by checking the tool response
-- If you need to identify yourself in any output, prefix it with "OpenAI Agent: "
-- Do not report success unless you actually received a successful response from the MCP tool(s)
-
-If the task is completable, proceed with execution. If not, explain why it cannot be completed.
-
-Task: {task}"""
+                # Minimal instructions - let the agent be autonomous
+                interpreted_task = task
                 
                 self._update_progress("OpenAI Agent", "Interpreting and executing task...")
                 result = await Runner.run(agent, interpreted_task)
