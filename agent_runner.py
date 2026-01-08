@@ -150,7 +150,10 @@ Before executing, determine:
 2. What tools would be needed to complete this task?
 3. If the task cannot be completed, clearly state why before attempting to query the server.
 
-IMPORTANT: If this task involves sending a message (DM, channel message, etc.), you MUST prefix the message with "Anthropic Agent: " to identify which agent sent it.
+IMPORTANT: If this task involves sending a message (DM, channel message, etc.):
+- You MUST prefix the message with "Anthropic Agent: " to identify which agent sent it
+- You MUST actually execute the task - find the user, send the message, don't just explain what you would do
+- Use usersList tool to find the user, then use chatPostMessage to send the message
 
 If the task is completable, proceed with execution. If not, explain why it cannot be completed.
 
@@ -246,9 +249,11 @@ Task: {task}"""
                 timing_steps.append(step)
                 self._update_progress("Langchain Agent", "Connecting to MCP server...")
                 output_parts = []
+                exec_step = None
                 
                 async def on_ready(agent, client, tools):
                     """Callback when agent is ready."""
+                    nonlocal exec_step, output_parts
                     try:
                         step.finish()
                         exec_step = TimingStep("Task Execution", datetime.now())
@@ -263,15 +268,28 @@ Before executing, determine:
 2. What tools would be needed to complete this task?
 3. If the task cannot be completed, clearly state why before attempting to query the server.
 
-IMPORTANT: If this task involves sending a message (DM, channel message, etc.), you MUST prefix the message with "Langchain Agent: " to identify which agent sent it.
+IMPORTANT: If this task involves sending a message (DM, channel message, etc.):
+- You MUST prefix the message with "Langchain Agent: " to identify which agent sent it
+- You MUST actually execute the task - find the user, send the message, don't just explain what you would do
+- Use usersList tool to find the user, then use chatPostMessage to send the message
 
 If the task is completable, proceed with execution. If not, explain why it cannot be completed.
 
 Task: {task}"""
                         
                         messages = [HumanMessage(content=interpreted_task)]
-                        result = await agent.ainvoke({"messages": messages})
-                        exec_step.finish()
+                        # Add timeout to prevent hanging
+                        try:
+                            result = await asyncio.wait_for(
+                                agent.ainvoke({"messages": messages}),
+                                timeout=180.0  # 3 minute timeout
+                            )
+                        except asyncio.TimeoutError:
+                            output_parts.append("Error: Agent execution timed out after 3 minutes")
+                            raise TimeoutError("Langchain agent execution timed out")
+                        
+                        if exec_step:
+                            exec_step.finish()
                         
                         if "messages" in result:
                             for msg in result["messages"]:
@@ -281,6 +299,11 @@ Task: {task}"""
                                     output_parts.append(str(msg))
                         else:
                             output_parts.append(str(result))
+                    except Exception as e:
+                        if exec_step:
+                            exec_step.finish()
+                        output_parts.append(f"Error: {str(e)}")
+                        raise
                     finally:
                         try:
                             await client.close()
@@ -407,7 +430,10 @@ Before executing, determine:
 2. What tools would be needed to complete this task?
 3. If the task cannot be completed, clearly state why before attempting to query the server.
 
-IMPORTANT: If this task involves sending a message (DM, channel message, etc.), you MUST prefix the message with "OpenAI Agent: " to identify which agent sent it.
+IMPORTANT: If this task involves sending a message (DM, channel message, etc.):
+- You MUST prefix the message with "OpenAI Agent: " to identify which agent sent it
+- You MUST actually execute the task - find the user, send the message, don't just explain what you would do
+- Use usersList tool to find the user, then use chatPostMessage to send the message
 
 If the task is completable, proceed with execution. If not, explain why it cannot be completed.
 
