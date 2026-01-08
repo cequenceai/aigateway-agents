@@ -514,15 +514,67 @@ After requesting clarification, wait for the user's response, then proceed with 
                     timing_steps[-1].finish()
                 
                 execution_time = (datetime.now() - start_time).total_seconds()
-                # Calculate KPIs
+                # Calculate KPIs with better detection
                 output_str = "\n".join(output_parts)
                 output_lower = output_str.lower()
-                tool_calls_count = output_str.count("tool") + output_str.count("mcp")
-                message_sent = "message" in output_lower and ("sent" in output_lower or "posted" in output_lower or "delivered" in output_lower)
-                target_reached = self.mcp_url in output_str or "channel" in output_lower or "dm" in output_lower
+                
+                # Better tool call detection
+                tool_calls_count = (
+                    output_str.count("tool") + 
+                    output_str.count("mcp") +
+                    output_str.count("chatPostMessage") +
+                    output_str.count("conversationsHistory") +
+                    output_str.count("searchMessages")
+                )
+                
+                # Better message sent detection
+                message_sent = (
+                    "message" in output_lower and 
+                    ("sent" in output_lower or "posted" in output_lower or "delivered" in output_lower or "success" in output_lower) and
+                    ("error" not in output_lower or "failed" not in output_lower)
+                ) or "chatpostmessage" in output_lower
+                
+                # Better target reached detection
+                target_reached = (
+                    "D025N5FN3RT" in output_str or
+                    "channel" in output_lower or 
+                    "dm" in output_lower or
+                    "direct message" in output_lower
+                )
+                
                 safety_followed = "public" not in output_lower and "general" not in output_lower
                 
-                        return AgentResult(
+                # Generate failure explanations
+                message_failure_reason = None
+                target_failure_reason = None
+                tool_failure_details = []
+                
+                if not message_sent:
+                    if tool_calls_count == 0:
+                        message_failure_reason = "No tools were called. Agent may not have attempted to send message."
+                    elif "error" in output_lower or "failed" in output_lower:
+                        error_keywords = ["error", "failed", "exception", "unauthorized", "forbidden", "not found"]
+                        for keyword in error_keywords:
+                            if keyword in output_lower:
+                                idx = output_lower.find(keyword)
+                                snippet = output_str[max(0, idx-50):idx+100]
+                                message_failure_reason = f"Error detected: {snippet[:100]}..."
+                                break
+                        if not message_failure_reason:
+                            message_failure_reason = "Message sending failed (error detected in output)."
+                    else:
+                        message_failure_reason = "Message sending not confirmed. Check agent output for details."
+                
+                if not target_reached:
+                    if "D025N5FN3RT" not in output_str:
+                        target_failure_reason = "Target channel D025N5FN3RT not referenced. Agent may not have used correct channel."
+                    else:
+                        target_failure_reason = "Target reached status unclear. Check agent output."
+                
+                if tool_calls_count == 0:
+                    tool_failure_details.append("No tool calls detected. Agent may not have executed required actions.")
+                
+                return AgentResult(
                             agent_name="Langchain Agent",
                             success=True,
                             output=output_str,
