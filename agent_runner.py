@@ -1267,8 +1267,33 @@ async def main():
                 self.live.stop()
                 self.live = None
     
-    # Initialize loading screen (will be set after agent selection)
+    # Initialize loading screen after we know which agents are selected
     loading_screen = None
+    if is_interactive() and not args.no_interactive:
+        agent_display_names = []
+        if "anthropic" in selected_agents:
+            agent_display_names.append("Anthropic Agent")
+        if "langchain" in selected_agents:
+            agent_display_names.append("Langchain Agent")
+        if "openai" in selected_agents:
+            agent_display_names.append("OpenAI Agent")
+        
+        if agent_display_names:
+            loading_screen = LoadingScreen(agent_display_names)
+            loading_screen.start()
+            global _loading_screen
+            _loading_screen = loading_screen
+    
+    # Progress callback that updates both console and loading screen
+    def update_progress(agent_name: str, status: str):
+        """Update progress display."""
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        # Update loading screen if available
+        if loading_screen:
+            loading_screen.update_status(agent_name, status)
+        # Also print to console for non-interactive or as backup
+        if not loading_screen or not is_interactive():
+            console.print(f"[dim][{timestamp}][/dim] [cyan]{agent_name}:[/cyan] {status}")
     
     # Create interactive prompt function if in interactive mode
     interactive_prompt_fn = None
