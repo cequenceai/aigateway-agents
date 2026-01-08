@@ -221,11 +221,11 @@ After requesting clarification, wait for the user's response, then proceed with 
    - Actually execute the tool call - do not just describe what you would do
    - Verify the message was sent successfully before reporting completion
 
-2. You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation).
+3. You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation).
 
-3. If you encounter an error, report it clearly in your output so the user understands what went wrong.
+4. If you encounter an error, report it clearly in your output so the user understands what went wrong. Still attempt at least one tool call even if errors occur.
 
-4. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
+5. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
                 
                 interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\n{task_completion}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'"
                 
@@ -736,11 +736,11 @@ After requesting clarification, wait for the user's response, then proceed with 
    - Actually execute the tool call - do not just describe what you would do
    - Verify the message was sent successfully before reporting completion
 
-2. You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation).
+3. You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation).
 
-3. If you encounter an error, report it clearly in your output so the user understands what went wrong.
+4. If you encounter an error, report it clearly in your output so the user understands what went wrong. Still attempt at least one tool call even if errors occur.
 
-4. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
+5. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
                 
                 interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\n{task_completion}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'"
                 
