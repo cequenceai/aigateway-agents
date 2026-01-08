@@ -1380,7 +1380,7 @@ async def main():
             with _loading_lock:
                 if agent_name in self.statuses:
                     self.statuses[agent_name] = status
-                    if self.live:
+                    if self.live and self.live.is_started:
                         self.live.update(self.render())
         
         def start(self):
