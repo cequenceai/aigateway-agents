@@ -76,6 +76,10 @@ class AgentRunner:
         self.interactive_prompt = interactive_prompt  # Function to get user input during execution
         self.pending_user_input = None  # Store user input received during execution
         self.input_lock = None  # Will be created as asyncio.Lock() when needed
+        # Round-robin queue for parallel execution
+        self.input_queue = asyncio.Queue()  # Queue for agent input requests
+        self.input_responses = {}  # Dict mapping agent_name -> response
+        self.input_event = asyncio.Event()  # Event to signal new input available
     
     def _update_progress(self, agent_name: str, status: str):
         """Update progress callback if available."""
@@ -325,8 +329,21 @@ If a task seems to require creating new entities or taking actions outside the e
                         task_with_id = f"{task}\n\n{code_of_conduct}\n\n{target_restriction}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
                         current_task = task_with_id
                         
-                        # Execute task immediately - no pre-execution prompts
+                        # Execute task - with interactive prompting if enabled
                         messages = [HumanMessage(content=current_task)]
+                        
+                        # If interactive prompt enabled, allow user input before execution
+                        if self.interactive_prompt:
+                            try:
+                                user_input = await asyncio.to_thread(
+                                    self.interactive_prompt,
+                                    "[yellow]Langchain Agent ready... Type additional instruction (Enter to start): [/yellow]"
+                                )
+                                if user_input and user_input.strip():
+                                    current_task = f"{current_task}\n\n[User additional instruction: {user_input.strip()}]"
+                                    messages = [HumanMessage(content=current_task)]
+                            except (EOFError, KeyboardInterrupt):
+                                pass
                         
                         # Add timeout to prevent hanging - reduced for faster execution
                         try:
@@ -504,9 +521,24 @@ If a task seems to require creating new entities or taking actions outside the e
                 
                 current_task = interpreted_task
                 
-                # Execute task immediately - no pre-execution prompts
+                # Execute task - with interactive prompting if enabled
                 self._update_progress("OpenAI Agent", "Interpreting and executing task...")
-                result = await Runner.run(agent, current_task)
+                
+                # For OpenAI agent, allow user input if interactive mode
+                if self.interactive_prompt:
+                    # Wait for user input before starting
+                    try:
+                        user_input = await asyncio.to_thread(
+                            self.interactive_prompt,
+                            "[yellow]OpenAI Agent ready... Type additional instruction (Enter to start): [/yellow]"
+                        )
+                        if user_input and user_input.strip():
+                            current_task = f"{current_task}\n\n[User additional instruction: {user_input.strip()}]"
+                    except (EOFError, KeyboardInterrupt):
+                        pass
+                
+                # Execute agent (Runner.run is synchronous, so run in thread)
+                result = await asyncio.to_thread(Runner.run, agent, current_task)
                 
                 step.finish()
                 
@@ -555,22 +587,124 @@ If a task seems to require creating new entities or taking actions outside the e
         results = []
         current_task = task
         
-        # Run agents sequentially for better progress visibility
-        # Each agent now has interactive prompting built-in during execution
-        if "anthropic" in selected_agents:
-            result = await self.run_anthropic_agent(current_task)
-            results.append(result)
-            self._update_progress("Anthropic Agent", "✅ Complete" if result.success else "❌ Failed")
+        # Check if running multiple agents (parallel) or single agent
+        is_parallel = len(selected_agents) > 1
         
-        if "langchain" in selected_agents:
-            result = await self.run_langchain_agent(current_task)
-            results.append(result)
-            self._update_progress("Langchain Agent", "✅ Complete" if result.success else "❌ Failed")
-        
-        if "openai" in selected_agents:
-            result = await self.run_openai_agent(current_task)
-            results.append(result)
-            self._update_progress("OpenAI Agent", "✅ Complete" if result.success else "❌ Failed")
+        if is_parallel:
+            # Parallel execution with round-robin input queue
+            async def run_agent_with_queue(agent_name: str, agent_func):
+                """Run agent and handle input queue requests."""
+                try:
+                    # Add agent to input queue system
+                    if self.interactive_prompt:
+                        # Agent can request input by putting itself in queue
+                        async def request_input(prompt_text: str) -> str:
+                            """Request user input through round-robin queue."""
+                            await self.input_queue.put((agent_name, prompt_text))
+                            # Wait for response
+                            while agent_name not in self.input_responses:
+                                await asyncio.sleep(0.1)
+                            response = self.input_responses.pop(agent_name)
+                            return response
+                        
+                        # Temporarily replace interactive_prompt for this agent
+                        original_prompt = self.interactive_prompt
+                        self.interactive_prompt = request_input
+                    
+                    result = await agent_func(current_task)
+                    return result
+                finally:
+                    if self.interactive_prompt:
+                        self.interactive_prompt = original_prompt
+            
+            # Start input handler for round-robin queue
+            async def input_handler():
+                """Handle input requests in round-robin fashion."""
+                while True:
+                    try:
+                        # Wait for input request with timeout
+                        agent_name, prompt_text = await asyncio.wait_for(
+                            self.input_queue.get(),
+                            timeout=1.0
+                        )
+                        
+                        # Get user input
+                        try:
+                            user_input = await asyncio.to_thread(
+                                original_prompt_for_handler,
+                                f"[yellow][{agent_name}] {prompt_text}[/yellow]"
+                            )
+                            self.input_responses[agent_name] = user_input or ""
+                        except (EOFError, KeyboardInterrupt):
+                            self.input_responses[agent_name] = ""
+                        
+                        self.input_queue.task_done()
+                    except asyncio.TimeoutError:
+                        # Check if all agents are done (check queue size and results)
+                        continue
+            
+            # Store original prompt for input handler
+            original_prompt_for_handler = self.interactive_prompt
+            
+            # Start input handler
+            input_handler_task = None
+            if self.interactive_prompt:
+                input_handler_task = asyncio.create_task(input_handler())
+            
+            # Run all agents in parallel
+            tasks = []
+            if "anthropic" in selected_agents:
+                tasks.append(("Anthropic Agent", self.run_anthropic_agent))
+            if "langchain" in selected_agents:
+                tasks.append(("Langchain Agent", self.run_langchain_agent))
+            if "openai" in selected_agents:
+                tasks.append(("OpenAI Agent", self.run_openai_agent))
+            
+            # Execute all in parallel
+            agent_tasks = [run_agent_with_queue(name, func) for name, func in tasks]
+            agent_results = await asyncio.gather(*agent_tasks, return_exceptions=True)
+            
+            # Process results
+            for i, result in enumerate(agent_results):
+                if isinstance(result, Exception):
+                    # Create error result
+                    error_result = AgentResult(
+                        agent_name=tasks[i][0],
+                        success=False,
+                        output="",
+                        error=str(result),
+                        execution_time=0,
+                        timing_steps=[]
+                    )
+                    results.append(error_result)
+                    self._update_progress(tasks[i][0], "❌ Failed")
+                else:
+                    results.append(result)
+                    self._update_progress(tasks[i][0], "✅ Complete" if result.success else "❌ Failed")
+            
+            # Cancel input handler
+            if input_handler_task:
+                input_handler_task.cancel()
+                try:
+                    await input_handler_task
+                except asyncio.CancelledError:
+                    pass
+        else:
+            # Single agent execution - wait for user input
+            if "anthropic" in selected_agents:
+                result = await self.run_anthropic_agent(current_task)
+                results.append(result)
+                self._update_progress("Anthropic Agent", "✅ Complete" if result.success else "❌ Failed")
+            
+            if "langchain" in selected_agents:
+                result = await self.run_langchain_agent(current_task)
+                results.append(result)
+                self._update_progress("Langchain Agent", "✅ Complete" if result.success else "❌ Failed")
+            
+            if "openai" in selected_agents:
+                result = await self.run_openai_agent(current_task)
+                results.append(result)
+                self._update_progress("OpenAI Agent", "✅ Complete" if result.success else "❌ Failed")
         
         return results
 
@@ -907,7 +1041,10 @@ async def main():
     )
     
     console.print()
-    console.print("[bold]Running agents sequentially...[/bold]")
+    if len(selected_agents) > 1:
+        console.print("[bold]Running agents in parallel with round-robin input queue...[/bold]")
+    else:
+        console.print("[bold]Running agent (waiting for your input)...[/bold]")
     console.print()
     
     results = await runner.run_agents(task, selected_agents)
