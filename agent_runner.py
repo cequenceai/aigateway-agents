@@ -71,6 +71,10 @@ class AgentResult:
     message_sent: bool = False
     target_reached: bool = False
     safety_constraints_followed: bool = True
+    # Failure explanations
+    message_failure_reason: Optional[str] = None
+    target_failure_reason: Optional[str] = None
+    tool_failure_details: List[str] = field(default_factory=list)
 
 
 class AgentRunner:
@@ -209,7 +213,22 @@ Examples:
 
 After requesting clarification, wait for the user's response, then proceed with the clarified task. Only proceed with execution when you have all necessary information."""
                 
-                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
+                # Task completion instructions with explicit message sending requirement
+                task_completion = """CRITICAL TASK COMPLETION REQUIREMENTS:
+
+1. If the task requires sending a message to Slack, you MUST:
+   - Use the chatPostMessage tool
+   - Set channel parameter to 'D025N5FN3RT' (this is the ONLY allowed channel)
+   - Actually execute the tool call - do not just describe what you would do
+   - Verify the message was sent successfully before reporting completion
+
+2. You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation).
+
+3. If you encounter an error, report it clearly in your output so the user understands what went wrong.
+
+4. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
+                
+                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\n{task_completion}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'"
                 
                 self._update_progress("Anthropic Agent", "Interpreting and executing task...")
                 output_parts = []
@@ -283,7 +302,10 @@ After requesting clarification, wait for the user's response, then proceed with 
                     tool_calls_successful=tool_calls_count if message_sent else 0,
                     message_sent=message_sent,
                     target_reached=target_reached,
-                    safety_constraints_followed=safety_followed
+                    safety_constraints_followed=safety_followed,
+                    message_failure_reason=message_failure_reason,
+                    target_failure_reason=target_failure_reason,
+                    tool_failure_details=tool_failure_details
                 )
             finally:
                 callback_server.stop()
@@ -500,18 +522,21 @@ After requesting clarification, wait for the user's response, then proceed with 
                 target_reached = self.mcp_url in output_str or "channel" in output_lower or "dm" in output_lower
                 safety_followed = "public" not in output_lower and "general" not in output_lower
                 
-                return AgentResult(
-                    agent_name="Langchain Agent",
-                    success=True,
-                    output=output_str,
-                    execution_time=execution_time,
-                    timing_steps=timing_steps,
-                    tool_calls_count=tool_calls_count,
-                    tool_calls_successful=tool_calls_count if message_sent else 0,
-                    message_sent=message_sent,
-                    target_reached=target_reached,
-                    safety_constraints_followed=safety_followed
-                )
+                        return AgentResult(
+                            agent_name="Langchain Agent",
+                            success=True,
+                            output=output_str,
+                            execution_time=execution_time,
+                            timing_steps=timing_steps,
+                            tool_calls_count=tool_calls_count,
+                            tool_calls_successful=tool_calls_count if message_sent else 0,
+                            message_sent=message_sent,
+                            target_reached=target_reached,
+                            safety_constraints_followed=safety_followed,
+                            message_failure_reason=message_failure_reason,
+                            target_failure_reason=target_failure_reason,
+                            tool_failure_details=tool_failure_details
+                        )
             finally:
                 callback_server.stop()
                 
@@ -651,7 +676,22 @@ Examples:
 
 After requesting clarification, wait for the user's response, then proceed with the clarified task. Only proceed with execution when you have all necessary information."""
                 
-                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'\n\nCRITICAL: You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation). You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."
+                # Task completion instructions with explicit message sending requirement
+                task_completion = """CRITICAL TASK COMPLETION REQUIREMENTS:
+
+1. If the task requires sending a message to Slack, you MUST:
+   - Use the chatPostMessage tool
+   - Set channel parameter to 'D025N5FN3RT' (this is the ONLY allowed channel)
+   - Actually execute the tool call - do not just describe what you would do
+   - Verify the message was sent successfully before reporting completion
+
+2. You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation).
+
+3. If you encounter an error, report it clearly in your output so the user understands what went wrong.
+
+4. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
+                
+                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\n{task_completion}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'"
                 
                 current_task = interpreted_task
                 
@@ -1062,8 +1102,21 @@ def display_results(results: List[AgentResult], task: str, mcp_url: str):
     
     for result in results:
         success_rate = f"{(result.tool_calls_successful/result.tool_calls_count*100):.1f}%" if result.tool_calls_count > 0 else "N/A"
-        message_sent = "[green]✅ Yes[/green]" if result.message_sent else "[red]❌ No[/red]"
-        target_reached = "[green]✅ Yes[/green]" if result.target_reached else "[red]❌ No[/red]"
+        
+        # Message sent with failure reason if applicable
+        if result.message_sent:
+            message_sent = "[green]✅ Yes[/green]"
+        else:
+            reason = result.message_failure_reason or "Unknown reason"
+            message_sent = f"[red]❌ No[/red]\n[dim]{reason[:60]}...[/dim]" if len(reason) > 60 else f"[red]❌ No[/red]\n[dim]{reason}[/dim]"
+        
+        # Target reached with failure reason if applicable
+        if result.target_reached:
+            target_reached = "[green]✅ Yes[/green]"
+        else:
+            reason = result.target_failure_reason or "Unknown reason"
+            target_reached = f"[red]❌ No[/red]\n[dim]{reason[:60]}...[/dim]" if len(reason) > 60 else f"[red]❌ No[/red]\n[dim]{reason}[/dim]"
+        
         safety_followed = "[green]✅ Yes[/green]" if result.safety_constraints_followed else "[yellow]⚠️ No[/yellow]"
         kpi_table.add_row(
             result.agent_name,
