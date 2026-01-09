@@ -2107,35 +2107,62 @@ def display_results(results: List[AgentResult], task: str, mcp_url: str, mcp_cap
         if not output:
             return output
         
-        # Find the last meaningful response by looking for key patterns
-        # Remove everything before actual tool calls or responses
+        # Look for the actual agent response - usually after tool results
+        # Find the last significant content
+        import re
+        
+        # Try to find the final summary after tool execution
+        patterns = [
+            r"Perfect!.*$",  # "Perfect! I've successfully..."
+            r"Successfully.*$",  # "Successfully sent..."
+            r"I've successfully.*$",  # "I've successfully..."
+            r"✅ Message verification.*$",  # Verification message
+            r"Here's a joke.*$",  # Direct response
+            r"Hello!.*$",  # Greeting
+        ]
+        
+        # Try each pattern to find a clean ending
+        for pattern in patterns:
+            match = re.search(pattern, output, re.DOTALL | re.IGNORECASE)
+            if match:
+                result = match.group(0).strip()
+                # Don't return if too short
+                if len(result) > 20:
+                    return result
+        
+        # Fallback: Remove common instruction prefixes
+        skip_markers = [
+            'CODE OF CONDUCT', 'PRINCIPLE OF', 'TARGET CHANNEL/USER',
+            'CLARIFICATION', 'CRITICAL TASK', 'MCP SERVER DEMONSTRATION',
+            'USER DISCOVERY', 'you MUST', 'Do NOT', 'IMPORTANT:',
+            'For messaging:', 'Execute the task', 'Attempt to call'
+        ]
+        
         lines = output.split('\n')
         clean_lines = []
-        skip_until_response = True
+        in_instructions = False
         
         for line in lines:
-            # Skip instruction blocks
-            if any(marker in line for marker in [
-                'CODE OF CONDUCT', 'PRINCIPLE OF', 'TARGET CHANNEL/USER:', 
-                'CLARIFICATION:', 'CRITICAL TASK COMPLETION', 'MCP SERVER DEMONSTRATION',
-                'USER DISCOVERY', 'DO NOT', 'you MUST'
-            ]):
-                skip_until_response = True
+            # Check if this line is part of instructions
+            is_instruction = any(marker in line for marker in skip_markers)
+            
+            # Skip bullet points that look like instructions
+            if line.strip().startswith('•') and any(word in line.lower() for word in ['must', 'should', 'call', 'execute', 'channel']):
+                is_instruction = True
+            
+            if is_instruction:
+                in_instructions = True
                 continue
             
-            # Start capturing when we see actual agent work
-            if any(marker in line for marker in [
-                "I'll", "I've", "I will", "I have", "Successfully", "successfully",
-                "Hello", "chatPostMessage", "Message verification", "✅"
-            ]):
-                skip_until_response = False
+            # Keep lines that look like actual responses
+            if any(marker in line for marker in ["I'll", "I've", "Perfect", "Successfully", "✅", "Hello", "joke", "sent", "delivered"]):
+                in_instructions = False
             
-            if not skip_until_response:
+            if not in_instructions:
                 clean_lines.append(line)
         
         cleaned = '\n'.join(clean_lines).strip()
-        # If cleaning removed everything, return original
-        return cleaned if cleaned else output[:500] + "..." if len(output) > 500 else output
+        return cleaned if cleaned else output[:300] + "..." if len(output) > 300 else output
     
     # Detailed results
     for result in results:
