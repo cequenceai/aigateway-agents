@@ -322,34 +322,28 @@ class AgentRunner:
 
 If a task seems to require creating new entities or taking actions outside the explicit scope, report this as a limitation rather than proceeding."""
                 
-                # Minimal instructions - let the agent be autonomous
-                # Add agent identification requirement and task completion requirement
-                #
-                # User discovery and identification instructions
-                user_discovery = """CRITICAL: USER DISCOVERY PROTOCOL
+                # User discovery and target channel instructions
+                # If target_identifier is provided, use it directly; otherwise require discovery
+                if self.target_identifier:
+                    user_discovery = f"""TARGET CHANNEL/USER: {self.target_identifier}
+
+You have been given a specific target channel/user ID. Use this ID directly in your tool calls.
+- For messaging: Use channel ID '{self.target_identifier}' in chatPostMessage
+- Do NOT search for channels or users - use the provided ID directly
+- Execute the task immediately using this target"""
+                else:
+                    user_discovery = """USER DISCOVERY PROTOCOL
 
 Before sending messages or executing actions that target a specific user, you MUST:
 
 1. DISCOVER THE USER'S INFORMATION FIRST:
    - Use available MCP tools to identify the current user (the person making the request)
    - For messaging systems: Find the user's ID, channel ID, or direct message channel
-   - For other systems: Identify the user's account, workspace, or context
    - DO NOT assume or hardcode any user IDs, channel IDs, or identifiers
 
-2. VERIFY USER CONTEXT:
-   - Confirm you have the correct user information before proceeding
-   - If the task says "send to me" or "DM me", discover the user's direct message channel first
-   - Use the discovered information to target the correct recipient
-
-3. THEN EXECUTE:
+2. THEN EXECUTE:
    - Only after discovering the user's specific information should you send messages or execute actions
-   - Use the discovered identifiers (user ID, channel ID, etc.) in your tool calls
-   - Never use hardcoded or assumed identifiers
-
-Example workflow:
-- Step 1: Use tools like usersList, conversationsList, or similar to find the current user's information
-- Step 2: Identify the user's channel ID, user ID, or other relevant identifier
-- Step 3: Use that discovered identifier to send messages or execute the requested action"""
+   - Use the discovered identifiers (user ID, channel ID, etc.) in your tool calls"""
                 
                 # Clarification instructions - agent determines if clarification is needed
                 clarification_instructions = """CLARIFICATION PROTOCOL: Before executing the task, analyze if the task is clear and complete. If the task is unclear, ambiguous, or missing critical information needed for execution, you MUST request clarification from the user.
@@ -378,7 +372,7 @@ After requesting clarification, wait for the user's response, then proceed with 
 
 4. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
                 
-                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_discovery}\n\n{clarification_instructions}\n\n{task_completion}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'"
+                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_discovery}\n\n{clarification_instructions}\n\n{task_completion}"
                 
                 self._update_progress("Anthropic Agent", "Interpreting and executing task...")
                 output_parts = []
@@ -720,39 +714,28 @@ IMPORTANT: The user has provided the above clarification. You MUST use this info
 
 If a task seems to require creating new entities or taking actions outside the explicit scope, report this as a limitation rather than proceeding."""
                         
-                        # Minimal instructions - let the agent be autonomous
-                        # Add agent identification requirement
-                        #
-                        # CRITICAL WARNING: AI agents will try to DM anyone and everyone if not explicitly restricted.
-                        # They will search for users, find users, and message random people.
-                        # DO NOT allow agents to search for users or message anyone except the specified channel.
-                        # This restriction MUST be explicit and repeated to prevent unwanted messaging.
-                        #
-                        # User discovery and identification instructions
-                        user_discovery = """CRITICAL: USER DISCOVERY PROTOCOL
+                        # User discovery and target channel instructions
+                        # If target_identifier is provided, use it directly; otherwise require discovery
+                        if self.target_identifier:
+                            user_discovery = f"""TARGET CHANNEL/USER: {self.target_identifier}
+
+You have been given a specific target channel/user ID. Use this ID directly in your tool calls.
+- For messaging: Use channel ID '{self.target_identifier}' in chatPostMessage
+- Do NOT search for channels or users - use the provided ID directly
+- Execute the task immediately using this target"""
+                        else:
+                            user_discovery = """USER DISCOVERY PROTOCOL
 
 Before sending messages or executing actions that target a specific user, you MUST:
 
 1. DISCOVER THE USER'S INFORMATION FIRST:
-   - Use available MCP tools to identify the current user (the person making the request)
+   - Use available MCP tools to identify the current user
    - For messaging systems: Find the user's ID, channel ID, or direct message channel
-   - For other systems: Identify the user's account, workspace, or context
    - DO NOT assume or hardcode any user IDs, channel IDs, or identifiers
 
-2. VERIFY USER CONTEXT:
-   - Confirm you have the correct user information before proceeding
-   - If the task says "send to me" or "DM me", discover the user's direct message channel first
-   - Use the discovered information to target the correct recipient
-
-3. THEN EXECUTE:
-   - Only after discovering the user's specific information should you send messages or execute actions
-   - Use the discovered identifiers (user ID, channel ID, etc.) in your tool calls
-   - Never use hardcoded or assumed identifiers
-
-Example workflow:
-- Step 1: Use tools like usersList, conversationsList, or similar to find the current user's information
-- Step 2: Identify the user's channel ID, user ID, or other relevant identifier
-- Step 3: Use that discovered identifier to send messages or execute the requested action"""
+2. THEN EXECUTE:
+   - Only after discovering the user's information should you send messages or execute actions
+   - Use the discovered identifiers in your tool calls"""
                         
                         # Clarification instructions - agent determines if clarification is needed
                         clarification_instructions = """CLARIFICATION PROTOCOL: Before executing the task, analyze if the task is clear and complete. If the task is unclear, ambiguous, or missing critical information needed for execution, you MUST request clarification from the user.
@@ -787,7 +770,7 @@ After requesting clarification, wait for the user's response, then proceed with 
 
 5. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
                         
-                        task_with_id = f"{task}\n\n{code_of_conduct}\n\n{user_discovery}\n\n{clarification_instructions}\n\n{task_completion}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
+                        task_with_id = f"{task}\n\n{code_of_conduct}\n\n{user_discovery}\n\n{clarification_instructions}\n\n{task_completion}"
                         current_task = task_with_id
                         
                         # Execute task - agent will request clarification if needed
@@ -1252,17 +1235,27 @@ IMPORTANT: The user has provided the above clarification. You MUST use this info
                 # Get model from instance, env var, or default
                 model = self.openai_model if self.openai_model else os.environ.get("OPENAI_MODEL", "gpt-4o")
                 
-                # Build comprehensive instructions for the agent (put in Agent.instructions to avoid context limit)
                 # Build concise instructions for the agent (shortened to avoid context length issues)
-                agent_instructions = """You are an autonomous AI agent with access to MCP server tools. Prefix outputs with 'OpenAI Agent: '.
+                if self.target_identifier:
+                    agent_instructions = f"""You are an autonomous AI agent with MCP server tools.
 
-SAFETY: Only do what's explicitly requested. Don't create entities unless asked. When in doubt, don't proceed.
+TARGET: Use channel/user ID '{self.target_identifier}' directly in tool calls. Don't search for channels.
 
-USER DISCOVERY: Before messaging users, discover their info using MCP tools (usersList, conversationsList). Never hardcode IDs. For "send to me" or "DM me", find the user's DM channel first.
+SAFETY: Only do what's explicitly requested. Don't create entities unless asked.
 
-CLARIFICATION: If task is unclear, output exactly: "CLARIFICATION_NEEDED: [your question]". Wait for response before proceeding.
+CLARIFICATION: If task is unclear, output: "CLARIFICATION_NEEDED: [your question]"
 
-COMPLETION: Actually execute tool calls (don't just describe). Complete all steps. Verify success before reporting done."""
+COMPLETION: Execute tool calls (don't just describe). Complete all steps."""
+                else:
+                    agent_instructions = """You are an autonomous AI agent with MCP server tools.
+
+SAFETY: Only do what's explicitly requested. Don't create entities unless asked.
+
+USER DISCOVERY: Before messaging, discover user info using MCP tools (usersList, conversationsList).
+
+CLARIFICATION: If task is unclear, output: "CLARIFICATION_NEEDED: [your question]"
+
+COMPLETION: Execute tool calls (don't just describe). Complete all steps."""
                 
                 # Set temperature if provided
                 agent_kwargs = {
@@ -2151,6 +2144,11 @@ async def main():
         dest="openai_model",
         help="OpenAI model to use (e.g., gpt-4o, gpt-4o-mini, gpt-4-turbo). Overrides OPENAI_MODEL env var."
     )
+    parser.add_argument(
+        "--target-channel",
+        dest="target_channel",
+        help="Target channel/user ID for messaging (e.g., D025N5FN3RT for Slack DM). Agents will use this directly instead of searching."
+    )
     
     args = parser.parse_args()
     
@@ -2515,8 +2513,12 @@ async def main():
     if not args.no_interactive:
         interactive_prompt_fn = get_user_input
     
-    # Get target identifier from environment or use None for generic deployment
-    target_identifier = os.environ.get("MCP_TARGET_IDENTIFIER", None)
+    # Get target identifier from CLI arg, environment, or use None for generic deployment
+    target_identifier = None
+    if hasattr(args, 'target_channel') and args.target_channel:
+        target_identifier = args.target_channel
+    else:
+        target_identifier = os.environ.get("MCP_TARGET_IDENTIFIER", None)
     
     runner = AgentRunner(
         mcp_url=mcp_url,
