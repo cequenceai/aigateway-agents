@@ -346,16 +346,24 @@ Before sending messages or executing actions that target a specific user, you MU
    - Use the discovered identifiers (user ID, channel ID, etc.) in your tool calls"""
                 
                 # Clarification instructions - agent determines if clarification is needed
-                clarification_instructions = """CLARIFICATION PROTOCOL: Before executing the task, analyze if the task is clear and complete. If the task is unclear, ambiguous, or missing critical information needed for execution, you MUST request clarification from the user.
+                if self.target_identifier:
+                    clarification_instructions = """CLARIFICATION: You have a target channel provided. Do NOT ask which channel - use the provided target.
 
-To request clarification, output exactly: "CLARIFICATION_NEEDED: [your specific question]"
+Only ask clarification if the MESSAGE CONTENT is unclear. If asked to "say hello" or similar, proceed immediately.
+
+To request clarification (only for message content): "CLARIFICATION_NEEDED: [your question about message content]"
+
+DO NOT ask about channels - you already have one."""
+                else:
+                    clarification_instructions = """CLARIFICATION PROTOCOL: If task is unclear, request clarification.
+
+To request clarification: "CLARIFICATION_NEEDED: [your question]"
 
 Examples:
-- If task says "send a message" but doesn't specify what message: "CLARIFICATION_NEEDED: What message should I send?"
-- If task says "post to channel" but doesn't specify which channel: "CLARIFICATION_NEEDED: Which channel should I post to?"
-- If task is clear and complete: Proceed directly with execution.
+- "send a message" without content: "CLARIFICATION_NEEDED: What message should I send?"
+- "post to channel" without specifying: "CLARIFICATION_NEEDED: Which channel?"
 
-After requesting clarification, wait for the user's response, then proceed with the clarified task. Only proceed with execution when you have all necessary information."""
+If task is clear, proceed directly."""
                 
                 # Task completion instructions
                 task_completion = """CRITICAL TASK COMPLETION REQUIREMENTS:
@@ -738,16 +746,24 @@ Before sending messages or executing actions that target a specific user, you MU
    - Use the discovered identifiers in your tool calls"""
                         
                         # Clarification instructions - agent determines if clarification is needed
-                        clarification_instructions = """CLARIFICATION PROTOCOL: Before executing the task, analyze if the task is clear and complete. If the task is unclear, ambiguous, or missing critical information needed for execution, you MUST request clarification from the user.
+                        if self.target_identifier:
+                            clarification_instructions = """CLARIFICATION: You have a target channel provided. Do NOT ask which channel - use the provided target.
 
-To request clarification, output exactly: "CLARIFICATION_NEEDED: [your specific question]"
+Only ask clarification if the MESSAGE CONTENT is unclear. If asked to "say hello" or similar, proceed immediately.
+
+To request clarification (only for message content): "CLARIFICATION_NEEDED: [your question about message content]"
+
+DO NOT ask about channels - you already have one."""
+                        else:
+                            clarification_instructions = """CLARIFICATION PROTOCOL: If task is unclear, request clarification.
+
+To request clarification: "CLARIFICATION_NEEDED: [your question]"
 
 Examples:
-- If task says "send a message" but doesn't specify what message: "CLARIFICATION_NEEDED: What message should I send?"
-- If task says "post to channel" but doesn't specify which channel: "CLARIFICATION_NEEDED: Which channel should I post to?"
-- If task is clear and complete: Proceed directly with execution.
+- "send a message" without content: "CLARIFICATION_NEEDED: What message should I send?"
+- "post to channel" without specifying: "CLARIFICATION_NEEDED: Which channel?"
 
-After requesting clarification, wait for the user's response, then proceed with the clarified task. Only proceed with execution when you have all necessary information."""
+If task is clear, proceed directly."""
                         
                         # Task completion instructions
                         task_completion = """CRITICAL TASK COMPLETION REQUIREMENTS:
