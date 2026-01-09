@@ -1572,7 +1572,6 @@ IMPORTANT: The user has provided the above clarification. You MUST use this info
                                 # Final fallback: read from stdin directly
                                 console.print(f"[yellow]⚠️  Using stdin fallback: {e}[/yellow]")
                                 try:
-                                    import sys
                                     # Flush output to ensure prompt is visible
                                     sys.stdout.flush()
                                     user_input = await asyncio.to_thread(sys.stdin.readline)
