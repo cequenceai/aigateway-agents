@@ -446,25 +446,31 @@ If task is clear, proceed directly."""
                             clarification_found = True
                     
                     # Check if agent requested clarification (after message collection)
-                    if "CLARIFICATION_NEEDED:" in agent_output or clarification_found:
+                    # Use regex to find ACTUAL requests, not our instruction examples
+                    import re
+                    clarification_pattern = r'(?:^|\n)\s*CLARIFICATION_NEEDED:\s*([^\n"]+)'
+                    clarification_matches = re.findall(clarification_pattern, agent_output)
+                    
+                    if DEBUG_MODE:
+                        console.print(f"[magenta]DEBUG [Anthropic] Checking for clarification requests[/magenta]")
+                        console.print(f"[magenta]DEBUG [Anthropic] Pattern matches: {clarification_matches}[/magenta]")
+                    
+                    if clarification_matches or clarification_found:
                         if not clarification_found:
                             clarification_found = True
                         # CRITICAL: Check if interactive_prompt is available
                         if not self.interactive_prompt:
                             console.print("[red]⚠️  WARNING: Agent requested clarification but interactive_prompt is not available![/red]")
-                            console.print("[yellow]Clarification request:[/yellow]")
-                            clarification_match = agent_output.split("CLARIFICATION_NEEDED:")[-1].strip()
-                            if "\n" in clarification_match:
-                                clarification_match = clarification_match.split("\n")[0].strip()
-                            console.print(f"[cyan]{clarification_match}[/cyan]")
+                            if clarification_matches:
+                                console.print("[yellow]Clarification request:[/yellow]")
+                                console.print(f"[cyan]{clarification_matches[-1].strip()}[/cyan]")
                             break
                         
-                        # Extract the question
-                        clarification_match = agent_output.split("CLARIFICATION_NEEDED:")[-1].strip()
-                        # Clean up the match - remove any trailing text that might be after the question
-                        if "\n" in clarification_match:
-                            clarification_match = clarification_match.split("\n")[0].strip()
-                        # Only consider it a valid clarification if there's actual content (not just quotes or punctuation)
+                        # Extract the question from the last match
+                        clarification_match = clarification_matches[-1].strip() if clarification_matches else ""
+                        if DEBUG_MODE:
+                            console.print(f"[magenta]DEBUG [Anthropic] Clarification text: {repr(clarification_match)}[/magenta]")
+                        # Only consider it a valid clarification if there's actual content
                         if clarification_match and len(clarification_match) > 5 and any(c.isalpha() for c in clarification_match):
                             # Show agent's question and get user response
                             console.print()  # Add spacing
@@ -849,19 +855,25 @@ If task is clear, proceed directly."""
                             needs_clarification = False
                             clarification_match = ""
                             
-                            if "CLARIFICATION_NEEDED:" in agent_output and self.interactive_prompt:
-                                # Extract the question
-                                clarification_match = agent_output.split("CLARIFICATION_NEEDED:")[-1].strip()
+                            # Look for ACTUAL clarification requests, not our instruction examples
+                            # Instruction text contains: "CLARIFICATION_NEEDED: [your question]"
+                            # Real requests look like: CLARIFICATION_NEEDED: What channel should I use?
+                            import re
+                            # Match CLARIFICATION_NEEDED: at start of line or after newline, NOT inside quotes
+                            clarification_pattern = r'(?:^|\n)\s*CLARIFICATION_NEEDED:\s*([^\n"]+)'
+                            clarification_matches = re.findall(clarification_pattern, agent_output)
+                            
+                            if DEBUG_MODE:
+                                console.print(f"[magenta]DEBUG [Langchain] Checking for clarification requests[/magenta]")
+                                console.print(f"[magenta]DEBUG [Langchain] Pattern matches: {clarification_matches}[/magenta]")
+                            
+                            if clarification_matches and self.interactive_prompt:
+                                # Get the last match (most recent request)
+                                clarification_match = clarification_matches[-1].strip()
                                 if DEBUG_MODE:
-                                    console.print(f"[magenta]DEBUG [Langchain] Found CLARIFICATION_NEEDED in output[/magenta]")
-                                    console.print(f"[magenta]DEBUG [Langchain] Raw match: {repr(clarification_match[:100] if len(clarification_match) > 100 else clarification_match)}[/magenta]")
-                                # Clean up the match - remove any trailing text that might be after the question
-                                if "\n" in clarification_match:
-                                    clarification_match = clarification_match.split("\n")[0].strip()
-                                if DEBUG_MODE:
-                                    console.print(f"[magenta]DEBUG [Langchain] After cleanup: {repr(clarification_match)}[/magenta]")
+                                    console.print(f"[magenta]DEBUG [Langchain] Clarification text: {repr(clarification_match)}[/magenta]")
                                     console.print(f"[magenta]DEBUG [Langchain] len={len(clarification_match)}, has_alpha={any(c.isalpha() for c in clarification_match)}[/magenta]")
-                                # Only consider it a valid clarification if there's actual content (not just quotes or punctuation)
+                                # Only consider it a valid clarification if there's actual content
                                 if clarification_match and len(clarification_match) > 5 and any(c.isalpha() for c in clarification_match):
                                     needs_clarification = True
                                     if DEBUG_MODE:
@@ -1381,13 +1393,20 @@ IMPORTANT: Actually call tools - don't just describe what you would do."""
                         agent_output += output
                     
                     # Check if agent requested clarification
-                    if "CLARIFICATION_NEEDED:" in agent_output and self.interactive_prompt:
-                        # Extract the question
-                        clarification_match = agent_output.split("CLARIFICATION_NEEDED:")[-1].strip()
-                        # Clean up the match - remove any trailing text that might be after the question
-                        if "\n" in clarification_match:
-                            clarification_match = clarification_match.split("\n")[0].strip()
-                        # Only consider it a valid clarification if there's actual content (not just quotes or punctuation)
+                    # Use regex to find ACTUAL requests, not our instruction examples
+                    import re
+                    clarification_pattern = r'(?:^|\n)\s*CLARIFICATION_NEEDED:\s*([^\n"]+)'
+                    clarification_matches = re.findall(clarification_pattern, agent_output)
+                    
+                    if DEBUG_MODE:
+                        console.print(f"[magenta]DEBUG [OpenAI] Checking for clarification requests[/magenta]")
+                        console.print(f"[magenta]DEBUG [OpenAI] Pattern matches: {clarification_matches}[/magenta]")
+                    
+                    if clarification_matches and self.interactive_prompt:
+                        clarification_match = clarification_matches[-1].strip()
+                        if DEBUG_MODE:
+                            console.print(f"[magenta]DEBUG [OpenAI] Clarification text: {repr(clarification_match)}[/magenta]")
+                        # Only consider it a valid clarification if there's actual content
                         if clarification_match and len(clarification_match) > 5 and any(c.isalpha() for c in clarification_match):
                             # Show agent's question and get user response
                             console.print()  # Add spacing
