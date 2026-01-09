@@ -58,6 +58,9 @@ from threading import Lock, Thread, Event
 console = Console()
 logger = logging.getLogger(__name__)
 
+# Debug mode flag - set via --debug CLI argument
+DEBUG_MODE = False
+
 # Global loading screen state
 _loading_screen = None
 _loading_lock = Lock()
@@ -849,12 +852,22 @@ If task is clear, proceed directly."""
                             if "CLARIFICATION_NEEDED:" in agent_output and self.interactive_prompt:
                                 # Extract the question
                                 clarification_match = agent_output.split("CLARIFICATION_NEEDED:")[-1].strip()
+                                if DEBUG_MODE:
+                                    console.print(f"[magenta]DEBUG [Langchain] Found CLARIFICATION_NEEDED in output[/magenta]")
+                                    console.print(f"[magenta]DEBUG [Langchain] Raw match: {repr(clarification_match[:100] if len(clarification_match) > 100 else clarification_match)}[/magenta]")
                                 # Clean up the match - remove any trailing text that might be after the question
                                 if "\n" in clarification_match:
                                     clarification_match = clarification_match.split("\n")[0].strip()
+                                if DEBUG_MODE:
+                                    console.print(f"[magenta]DEBUG [Langchain] After cleanup: {repr(clarification_match)}[/magenta]")
+                                    console.print(f"[magenta]DEBUG [Langchain] len={len(clarification_match)}, has_alpha={any(c.isalpha() for c in clarification_match)}[/magenta]")
                                 # Only consider it a valid clarification if there's actual content (not just quotes or punctuation)
                                 if clarification_match and len(clarification_match) > 5 and any(c.isalpha() for c in clarification_match):
                                     needs_clarification = True
+                                    if DEBUG_MODE:
+                                        console.print(f"[magenta]DEBUG [Langchain] Valid clarification - will show prompt[/magenta]")
+                                elif DEBUG_MODE:
+                                    console.print(f"[magenta]DEBUG [Langchain] Invalid clarification - skipping prompt[/magenta]")
                             
                             if needs_clarification:
                                 # Show agent's question and get user response
@@ -1559,8 +1572,15 @@ IMPORTANT: The user has provided the above clarification. You MUST use this info
                         try:
                             # Validate the prompt text - skip if it's empty or just punctuation
                             clean_prompt = prompt_text.strip() if prompt_text else ""
+                            if DEBUG_MODE:
+                                console.print(f"[magenta]DEBUG [InputHandler] Got request from {agent_name}[/magenta]")
+                                console.print(f"[magenta]DEBUG [InputHandler] prompt_text: {repr(prompt_text[:100] if prompt_text and len(prompt_text) > 100 else prompt_text)}[/magenta]")
+                                console.print(f"[magenta]DEBUG [InputHandler] clean_prompt: {repr(clean_prompt)}[/magenta]")
+                                console.print(f"[magenta]DEBUG [InputHandler] len={len(clean_prompt)}, has_alpha={any(c.isalpha() for c in clean_prompt) if clean_prompt else False}[/magenta]")
                             if not clean_prompt or len(clean_prompt) < 5 or not any(c.isalpha() for c in clean_prompt):
                                 # Invalid clarification request - skip it
+                                if DEBUG_MODE:
+                                    console.print(f"[magenta]DEBUG [InputHandler] SKIPPING invalid clarification[/magenta]")
                                 self.input_responses[agent_name] = ""
                                 self.input_queue.task_done()
                                 continue
@@ -2243,8 +2263,19 @@ async def main():
         dest="target_channel",
         help="Target channel/user ID for messaging (e.g., D025N5FN3RT for Slack DM). Agents will use this directly instead of searching."
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode with verbose logging for clarification detection"
+    )
     
     args = parser.parse_args()
+    
+    # Store debug mode globally for clarification debugging
+    global DEBUG_MODE
+    DEBUG_MODE = args.debug
+    if DEBUG_MODE:
+        console.print("[yellow]🔍 DEBUG MODE ENABLED - verbose clarification logging[/yellow]")
     
     # Load .env file if it exists (already loaded at top, but ensure it's done)
     try:
