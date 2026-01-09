@@ -133,23 +133,19 @@ async def build_mcp_server(
     # Track if factory is called (for debugging)
     factory_called = {"called": False, "count": 0}
     
-    def create_httpx_client(
-        headers: dict = None,
-        timeout: httpx.Timeout = None,
-        auth: any = None,
-        **kwargs
-    ) -> httpx.AsyncClient:
+    def create_httpx_client(**kwargs) -> httpx.AsyncClient:
         """
         Create httpx client with extended timeouts for MCP server.
         
         The SDK calls this factory with: headers, timeout, auth
-        We override the timeout to use longer values for slow MCP servers.
+        We accept all kwargs and override timeout for slow MCP servers.
         """
         # Track that factory was called
         factory_called["called"] = True
         factory_called["count"] += 1
         
         logger.info(f"🔧 [FACTORY CALL #{factory_called['count']}] Creating custom httpx client...")
+        logger.info(f"   SDK passed kwargs: {list(kwargs.keys())}")
         
         # Override timeout with our extended values
         # The SDK passes a default timeout, but we want longer for slow servers
@@ -160,14 +156,13 @@ async def build_mcp_server(
             pool=30.0,      # 30 seconds for connection pooling
         )
         
-        logger.info(f"   SDK requested timeout: {timeout}")
+        sdk_timeout = kwargs.pop('timeout', None)
+        logger.info(f"   SDK requested timeout: {sdk_timeout}")
         logger.info(f"   Using custom timeout: connect=30s, read=300s")
         
-        # Create client with our custom timeout, but pass through headers and auth
+        # Create client with our custom timeout, passing through all other kwargs
         client = httpx.AsyncClient(
-            headers=headers,
             timeout=custom_timeout,
-            auth=auth,
             **kwargs
         )
         
