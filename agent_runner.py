@@ -1253,25 +1253,24 @@ IMPORTANT: The user has provided the above clarification. You MUST use this info
                 
                 # Build concise instructions for the agent (shortened to avoid context length issues)
                 if self.target_identifier:
-                    agent_instructions = f"""You are an autonomous AI agent with MCP server tools.
+                    agent_instructions = f"""You are an AI agent with MCP server tools. You MUST use tools to complete tasks.
 
-TARGET: Use channel/user ID '{self.target_identifier}' directly in tool calls. Don't search for channels.
+TARGET: Use channel/user ID '{self.target_identifier}' directly. Don't search.
 
-SAFETY: Only do what's explicitly requested. Don't create entities unless asked.
+IMPORTANT: You MUST call chatPostMessage with channel='{self.target_identifier}' to send messages.
+Do NOT just say you did something - actually call the tool!
 
-CLARIFICATION: If task is unclear, output: "CLARIFICATION_NEEDED: [your question]"
-
-COMPLETION: Execute tool calls (don't just describe). Complete all steps."""
+Example: To say hello, call chatPostMessage(channel='{self.target_identifier}', text='Hello!')"""
                 else:
-                    agent_instructions = """You are an autonomous AI agent with MCP server tools.
+                    agent_instructions = """You are an AI agent with MCP server tools. You MUST use tools.
 
-SAFETY: Only do what's explicitly requested. Don't create entities unless asked.
+SAFETY: Only do what's explicitly requested.
 
-USER DISCOVERY: Before messaging, discover user info using MCP tools (usersList, conversationsList).
+USER DISCOVERY: Find user/channel info using usersList or conversationsList before messaging.
 
-CLARIFICATION: If task is unclear, output: "CLARIFICATION_NEEDED: [your question]"
+CLARIFICATION: If unclear, output: "CLARIFICATION_NEEDED: [question]"
 
-COMPLETION: Execute tool calls (don't just describe). Complete all steps."""
+IMPORTANT: Actually call tools - don't just describe what you would do."""
                 
                 # Set temperature if provided
                 agent_kwargs = {
@@ -2102,11 +2101,48 @@ def display_results(results: List[AgentResult], task: str, mcp_url: str, mcp_cap
     console.print(kpi_table)
     console.print()
     
+    # Helper function to clean agent output (remove instruction blocks)
+    def clean_output(output: str) -> str:
+        """Remove instruction blocks from output, keeping only agent response."""
+        if not output:
+            return output
+        
+        # Find the last meaningful response by looking for key patterns
+        # Remove everything before actual tool calls or responses
+        lines = output.split('\n')
+        clean_lines = []
+        skip_until_response = True
+        
+        for line in lines:
+            # Skip instruction blocks
+            if any(marker in line for marker in [
+                'CODE OF CONDUCT', 'PRINCIPLE OF', 'TARGET CHANNEL/USER:', 
+                'CLARIFICATION:', 'CRITICAL TASK COMPLETION', 'MCP SERVER DEMONSTRATION',
+                'USER DISCOVERY', 'DO NOT', 'you MUST'
+            ]):
+                skip_until_response = True
+                continue
+            
+            # Start capturing when we see actual agent work
+            if any(marker in line for marker in [
+                "I'll", "I've", "I will", "I have", "Successfully", "successfully",
+                "Hello", "chatPostMessage", "Message verification", "✅"
+            ]):
+                skip_until_response = False
+            
+            if not skip_until_response:
+                clean_lines.append(line)
+        
+        cleaned = '\n'.join(clean_lines).strip()
+        # If cleaning removed everything, return original
+        return cleaned if cleaned else output[:500] + "..." if len(output) > 500 else output
+    
     # Detailed results
     for result in results:
         if result.success:
+            cleaned_output = clean_output(result.output)
             console.print(Panel(
-                Markdown(result.output) if result.output else "[dim]No output[/dim]",
+                Markdown(cleaned_output) if cleaned_output else "[dim]No output[/dim]",
                 title=f"[bold green]✅ {result.agent_name}[/bold green]",
                 border_style="green",
                 title_align="left"
