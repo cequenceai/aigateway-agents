@@ -461,7 +461,8 @@ If task is clear, proceed directly."""
                         # Clean up the match - remove any trailing text that might be after the question
                         if "\n" in clarification_match:
                             clarification_match = clarification_match.split("\n")[0].strip()
-                        if clarification_match:
+                        # Only consider it a valid clarification if there's actual content (not just quotes or punctuation)
+                        if clarification_match and len(clarification_match) > 5 and any(c.isalpha() for c in clarification_match):
                             # Show agent's question and get user response
                             console.print()  # Add spacing
                             console.print(Panel(
@@ -841,77 +842,85 @@ If task is clear, proceed directly."""
                                     pass
                             
                             # Check if agent requested clarification
+                            # Only handle clarification if agent actually requested it
+                            needs_clarification = False
+                            clarification_match = ""
+                            
                             if "CLARIFICATION_NEEDED:" in agent_output and self.interactive_prompt:
                                 # Extract the question
                                 clarification_match = agent_output.split("CLARIFICATION_NEEDED:")[-1].strip()
                                 # Clean up the match - remove any trailing text that might be after the question
                                 if "\n" in clarification_match:
                                     clarification_match = clarification_match.split("\n")[0].strip()
-                                if clarification_match:
-                                    # Show agent's question and get user response
-                                    console.print()  # Add spacing
-                                    console.print(Panel(
-                                        f"[bold cyan]🤖 Langchain Agent needs clarification:[/bold cyan]\n\n{clarification_match}",
-                                        title="Clarification Request",
-                                        border_style="green"
-                                    ))
-                            console.print()
+                                # Only consider it a valid clarification if there's actual content (not just quotes or punctuation)
+                                if clarification_match and len(clarification_match) > 5 and any(c.isalpha() for c in clarification_match):
+                                    needs_clarification = True
                             
-                            # Simple input prompt - cursor appears right after this text
-                            console.print("[bold yellow]Your response: [/bold yellow]", end="")
-                            sys.stdout.flush()
-                            
-                            try:
-                                # Check if interactive_prompt is async or sync
-                                # Try to call it and check if result is a coroutine
-                                prompt_result = self.interactive_prompt("")
-                                if inspect.iscoroutine(prompt_result):
-                                    # It's async - await it
-                                    user_response = await prompt_result
-                                elif inspect.iscoroutinefunction(self.interactive_prompt):
-                                    # Function is async but we got a coroutine - await it
-                                    user_response = await prompt_result
-                                else:
-                                    # It's sync - use the result directly
-                                    user_response = prompt_result
+                            if needs_clarification:
+                                # Show agent's question and get user response
+                                console.print()  # Add spacing
+                                console.print(Panel(
+                                    f"[bold cyan]🤖 Langchain Agent needs clarification:[/bold cyan]\n\n{clarification_match}",
+                                    title="Clarification Request",
+                                    border_style="green"
+                                ))
+                                console.print()
                                 
-                                # Ensure user_response is a string (handle coroutine objects that weren't awaited)
-                                if inspect.iscoroutine(user_response):
-                                    console.print("[red]ERROR: Got coroutine object instead of string! This is a bug.[/red]")
-                                    user_response = ""
-                                if user_response is None:
-                                    user_response = ""
-                                user_response = str(user_response)
+                                # Simple input prompt - cursor appears right after this text
+                                console.print("[bold yellow]Your response: [/bold yellow]", end="")
+                                sys.stdout.flush()
                                 
-                                if user_response and user_response.strip():
-                                    # Add clarification to task in a clear format that the agent will understand
-                                    # Make it explicit so the agent doesn't ask again
-                                    clarification_text = user_response.strip()
-                                    # Format clarification to be very explicit and prevent looping
-                                    current_task = f"""{current_task}
+                                try:
+                                    # Check if interactive_prompt is async or sync
+                                    # Try to call it and check if result is a coroutine
+                                    prompt_result = self.interactive_prompt("")
+                                    if inspect.iscoroutine(prompt_result):
+                                        # It's async - await it
+                                        user_response = await prompt_result
+                                    elif inspect.iscoroutinefunction(self.interactive_prompt):
+                                        # Function is async but we got a coroutine - await it
+                                        user_response = await prompt_result
+                                    else:
+                                        # It's sync - use the result directly
+                                        user_response = prompt_result
+                                    
+                                    # Ensure user_response is a string (handle coroutine objects that weren't awaited)
+                                    if inspect.iscoroutine(user_response):
+                                        console.print("[red]ERROR: Got coroutine object instead of string! This is a bug.[/red]")
+                                        user_response = ""
+                                    if user_response is None:
+                                        user_response = ""
+                                    user_response = str(user_response)
+                                    
+                                    if user_response and user_response.strip():
+                                        # Add clarification to task in a clear format that the agent will understand
+                                        # Make it explicit so the agent doesn't ask again
+                                        clarification_text = user_response.strip()
+                                        # Format clarification to be very explicit and prevent looping
+                                        current_task = f"""{current_task}
 
 CRITICAL USER CLARIFICATION - USE THIS INFORMATION NOW:
 {clarification_text}
 
 IMPORTANT: The user has provided the above clarification. You MUST use this information to complete the task. Do NOT ask for clarification again on this topic. If the clarification mentions a channel, use that channel. If it mentions a message, use that message. Proceed with execution using this information."""
-                                    clarification_rounds += 1
-                                    agent_output = ""  # Reset for next round
-                                    console.print()  # New line after input
-                                    console.print(f"[green]✓ Received: {clarification_text}[/green]")
-                                    console.print("[dim]Continuing with clarification...[/dim]\n")
-                                    # Continue loop to re-execute with clarification
-                                    continue
-                                else:
-                                    # User pressed Enter - proceed anyway
-                                    console.print("[yellow]No response provided, proceeding anyway...[/yellow]\n")
+                                        clarification_rounds += 1
+                                        agent_output = ""  # Reset for next round
+                                        console.print()  # New line after input
+                                        console.print(f"[green]✓ Received: {clarification_text}[/green]")
+                                        console.print("[dim]Continuing with clarification...[/dim]\n")
+                                        # Continue loop to re-execute with clarification
+                                        continue
+                                    else:
+                                        # User pressed Enter - proceed anyway
+                                        console.print("[yellow]No response provided, proceeding anyway...[/yellow]\n")
+                                        break
+                                except (EOFError, KeyboardInterrupt):
+                                    console.print("\n[yellow]Clarification cancelled, proceeding...[/yellow]\n")
                                     break
-                            except (EOFError, KeyboardInterrupt):
-                                console.print("\n[yellow]Clarification cancelled, proceeding...[/yellow]\n")
-                                break
-                            except Exception as e:
-                                console.print(f"[red]Error getting clarification: {e}[/red]")
-                                console.print("[yellow]Proceeding without clarification...[/yellow]\n")
-                                break
+                                except Exception as e:
+                                    console.print(f"[red]Error getting clarification: {e}[/red]")
+                                    console.print("[yellow]Proceeding without clarification...[/yellow]\n")
+                                    break
                             
                             # No clarification needed or max rounds reached - break
                             break
