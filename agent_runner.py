@@ -471,7 +471,6 @@ After requesting clarification, wait for the user's response, then proceed with 
                             
                             # Simple input prompt - cursor appears right after this text
                             console.print("[bold yellow]Your response: [/bold yellow]", end="")
-                            import sys
                             sys.stdout.flush()
                             
                             try:
@@ -861,7 +860,6 @@ After requesting clarification, wait for the user's response, then proceed with 
                             
                             # Simple input prompt - cursor appears right after this text
                             console.print("[bold yellow]Your response: [/bold yellow]", end="")
-                            import sys
                             sys.stdout.flush()
                             
                             try:
@@ -1555,7 +1553,6 @@ IMPORTANT: The user has provided the above clarification. You MUST use this info
                             
                             # Simple input prompt - cursor appears right after this text
                             console.print("[bold yellow]Your response: [/bold yellow]", end="")
-                            import sys
                             sys.stdout.flush()
                             
                             # Check if original_prompt_for_handler is async or sync
