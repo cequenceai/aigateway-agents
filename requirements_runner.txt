@@ -2,6 +2,7 @@
 # This includes dependencies from all three agents
 
 # Core dependencies
+python-dotenv>=1.0.0  # For loading .env file with API keys
 rich>=13.0.0
 asyncio
 
@@ -20,4 +21,4 @@ openai>=1.0.0
 
 # MCP dependencies
 mcp>=1.0.0
-httpx>=0.27.0
+httpx>=0.27.0  # Also used for API key validation

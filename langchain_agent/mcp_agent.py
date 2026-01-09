@@ -267,8 +267,8 @@ async def main() -> None:
             console.print()
             await chat_loop(agent)
 
-        # Run the agent session
-        await run_agent_session(config, on_agent_ready)
+        # Run the agent session (storage is optional, will check for tokens if provided)
+        await run_agent_session(config, on_agent_ready, storage=None)
 
     except ValueError as e:
         console.print(f"[red]Configuration error: {e}[/red]")
