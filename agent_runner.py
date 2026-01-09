@@ -1374,7 +1374,8 @@ IMPORTANT: Actually call tools - don't just describe what you would do."""
                         # Clean up the match - remove any trailing text that might be after the question
                         if "\n" in clarification_match:
                             clarification_match = clarification_match.split("\n")[0].strip()
-                        if clarification_match:
+                        # Only consider it a valid clarification if there's actual content (not just quotes or punctuation)
+                        if clarification_match and len(clarification_match) > 5 and any(c.isalpha() for c in clarification_match):
                             # Show agent's question and get user response
                             console.print()  # Add spacing
                             console.print(Panel(
@@ -1556,18 +1557,23 @@ IMPORTANT: The user has provided the above clarification. You MUST use this info
                         
                         # Get user input with context
                         try:
+                            # Validate the prompt text - skip if it's empty or just punctuation
+                            clean_prompt = prompt_text.strip() if prompt_text else ""
+                            if not clean_prompt or len(clean_prompt) < 5 or not any(c.isalpha() for c in clean_prompt):
+                                # Invalid clarification request - skip it
+                                self.input_responses[agent_name] = ""
+                                self.input_queue.task_done()
+                                continue
+                            
                             # CRITICAL: Pause the loading screen to allow user input
                             # The Live display interferes with terminal input
                             if _loading_screen:
                                 _loading_screen.pause()
                             
-                            # Show context about what agent is doing
-                            context_prompt = f"[yellow][{agent_name}][/yellow]\n[dim]Requesting input during execution...[/dim]\n[yellow]{prompt_text}[/yellow]"
-                            
                             # Display the clarification request
                             console.print()
                             console.print(Panel(
-                                f"[bold cyan]🤖 {agent_name} needs clarification:[/bold cyan]\n\n{prompt_text}",
+                                f"[bold cyan]🤖 {agent_name} needs clarification:[/bold cyan]\n\n{clean_prompt}",
                                 title="Clarification Request",
                                 border_style="cyan"
                             ))
