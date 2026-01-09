@@ -1,10 +1,17 @@
 """MCP server configuration for OpenAI Agents SDK."""
 
 import logging
-from typing import Optional
+import os
+from typing import Optional, Callable
 
+import httpx
 from agents.mcp import MCPServerStreamableHttp, MCPServerStreamableHttpParams
 from mcp.client.auth import OAuthClientProvider, TokenStorage
+
+# CRITICAL FIX: The 5.0 second timeout is httpx's default
+# We need to ensure our factory is used, but also set a global fallback
+# Set environment variable as hint (though httpx doesn't use it directly)
+os.environ.setdefault("HTTPX_DEFAULT_READ_TIMEOUT", "300.0")
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +75,22 @@ async def build_mcp_server(
             }
             
             # Trigger OAuth by connecting - this will register the client and get tokens
+            # Use longer timeout for OAuth flow
+            import asyncio
+            logger.info("🔧 Creating MultiServerMCPClient for OAuth registration...")
             client = MultiServerMCPClient(mcp_config)
-            await client.get_tools()  # This triggers OAuth registration and flow
+            logger.info("⏳ Calling client.get_tools() to trigger OAuth (timeout: 120s)...")
+            # Use longer timeout for get_tools() during OAuth
+            try:
+                await asyncio.wait_for(client.get_tools(), timeout=120.0)  # 2 minute timeout for OAuth
+                logger.info("✓ OAuth registration successful")
+            except asyncio.TimeoutError:
+                logger.warning("⚠ OAuth get_tools() timed out after 2 minutes")
+                raise
+            except Exception as oauth_error:
+                logger.warning(f"⚠ OAuth registration error: {type(oauth_error).__name__}: {str(oauth_error)[:200]}")
+                # Don't fail completely - might still work with existing tokens
+                pass
             
             # Now get the token from storage
             if storage:
@@ -101,20 +122,107 @@ async def build_mcp_server(
     else:
         logger.warning("⚠ MCP server configured without authentication (may fail)")
     
+    # Create custom httpx client factory with longer timeouts
+    # The default 5.0 second timeout causes "ClientRequest" timeout errors
+    # DIAGNOSIS: The error "Timed out while waiting for response to ClientRequest. Waited 5.0 seconds"
+    # suggests that either:
+    # 1. The httpx_client_factory parameter isn't being recognized/used
+    # 2. There's a default httpx client being created elsewhere with 5.0s timeout
+    # 3. The connect() method makes a request before our custom client is used
+    
+    # Track if factory is called (for debugging)
+    factory_called = {"called": False, "count": 0}
+    
+    def create_httpx_client(
+        headers: dict = None,
+        timeout: httpx.Timeout = None,
+        auth: any = None,
+        **kwargs
+    ) -> httpx.AsyncClient:
+        """
+        Create httpx client with extended timeouts for MCP server.
+        
+        The SDK calls this factory with: headers, timeout, auth
+        We override the timeout to use longer values for slow MCP servers.
+        """
+        # Track that factory was called
+        factory_called["called"] = True
+        factory_called["count"] += 1
+        
+        logger.info(f"🔧 [FACTORY CALL #{factory_called['count']}] Creating custom httpx client...")
+        
+        # Override timeout with our extended values
+        # The SDK passes a default timeout, but we want longer for slow servers
+        custom_timeout = httpx.Timeout(
+            connect=30.0,   # 30 seconds to establish connection
+            read=300.0,     # 5 minutes to read response (for slow MCP servers)
+            write=30.0,     # 30 seconds to write request
+            pool=30.0,      # 30 seconds for connection pooling
+        )
+        
+        logger.info(f"   SDK requested timeout: {timeout}")
+        logger.info(f"   Using custom timeout: connect=30s, read=300s")
+        
+        # Create client with our custom timeout, but pass through headers and auth
+        client = httpx.AsyncClient(
+            headers=headers,
+            timeout=custom_timeout,
+            auth=auth,
+            **kwargs
+        )
+        
+        logger.info(f"✓ [FACTORY CALL #{factory_called['count']}] Custom httpx client created with 300s read timeout")
+        
+        return client
+    
     # Create MCPServerStreamableHttpParams
     # MCPServerStreamableHttpParams is a TypedDict - create as dict with proper typing
+    # Increased timeout significantly to handle slow MCP server responses
+    # DIAGNOSIS: The 5.0 second timeout suggests httpx default is being used somewhere
+    # We're setting both timeout (for SDK) and httpx_client_factory (for underlying HTTP client)
+    logger.info("🔧 Creating MCPServerStreamableHttpParams with extended timeouts...")
+    logger.info(f"   - timeout: 300.0 seconds")
+    logger.info(f"   - httpx_client_factory: custom client with 300s read timeout")
+    
     params = MCPServerStreamableHttpParams(
         url=mcp_url,
         headers=headers,
-        timeout=120.0,  # 2 minute timeout in seconds
+        timeout=300.0,  # 5 minute timeout in seconds (increased to handle slow responses and OAuth flows)
+        httpx_client_factory=create_httpx_client,  # Use custom httpx client with longer timeouts
     )
+    logger.info("✓ MCPServerStreamableHttpParams created successfully")
+    
+    # Verify params before creating server
+    logger.info("🔍 Verifying params before creating MCPServerStreamableHttp...")
+    logger.info(f"   - url: {params.get('url', 'N/A')}")
+    logger.info(f"   - timeout: {params.get('timeout', 'N/A')}")
+    logger.info(f"   - httpx_client_factory: {params.get('httpx_client_factory', 'N/A')}")
+    if 'httpx_client_factory' in params and params['httpx_client_factory']:
+        logger.info(f"   - httpx_client_factory type: {type(params['httpx_client_factory'])}")
+        logger.info(f"   - httpx_client_factory callable: {callable(params['httpx_client_factory'])}")
     
     # Create MCPServerStreamableHttp instance for OpenAI Agents SDK
+    logger.info("🔧 Creating MCPServerStreamableHttp instance...")
     mcp_server = MCPServerStreamableHttp(
         params=params,
         name="mcp_server",
         cache_tools_list=True,  # Cache tools list to reduce API calls
         max_retry_attempts=3,  # Retry failed requests
     )
+    logger.info("✓ MCPServerStreamableHttp created")
+    
+    # Try to verify the httpx client factory is accessible
+    if hasattr(mcp_server, '_params'):
+        stored_params = mcp_server._params
+        if 'httpx_client_factory' in stored_params:
+            logger.info("✓ httpx_client_factory is stored in server params")
+            logger.info(f"   Factory will be called when SDK needs an httpx client")
+            logger.info(f"   If you see 'FACTORY CALL #' logs, the factory is being used")
+            logger.info(f"   If you DON'T see those logs but get 5.0s timeout, factory is NOT being called")
+        else:
+            logger.warning("⚠ httpx_client_factory NOT found in server params - may not be used!")
+            logger.warning("   This could explain why 5.0s default timeout is used")
+    else:
+        logger.warning("⚠ Cannot verify params - mcp_server doesn't have _params attribute")
     
     return mcp_server

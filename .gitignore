@@ -27,6 +27,10 @@ ENV/
 # Logs
 *.log
 logs/
+agent_timing_log_*.md
+
+# Deprecated files (preserved for reference)
+deprecated/
 
 # OS
 .DS_Store

@@ -345,11 +345,11 @@ def create_oauth_provider(
     # Create storage instance (will load existing tokens from disk)
     storage = InMemoryTokenStorage()
     
-    # Check if we already have tokens
-    import asyncio
+    # Check if we already have tokens (synchronously, since tokens are loaded from disk in __init__)
+    # Note: We check _tokens directly instead of calling async get_tokens() to avoid event loop issues
     try:
-        existing_tokens = asyncio.run(storage.get_tokens())
-        if existing_tokens:
+        # Tokens are already loaded from disk in __init__, so we can check directly
+        if storage._tokens is not None:
             print("✓ Found existing OAuth tokens, skipping authentication")
             # Still create provider but it should use existing tokens
     except Exception:

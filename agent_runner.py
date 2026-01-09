@@ -8,12 +8,35 @@ and run the same task across all selected agents using a single MCP server.
 
 import argparse
 import asyncio
+import inspect
 import logging
 import os
 import sys
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from pathlib import Path
+
+# Load environment variables from .env file if it exists
+try:
+    from dotenv import load_dotenv
+    # Load .env from the script's directory or parent directory
+    script_dir = Path(__file__).parent
+    env_file = script_dir / ".env"
+    if env_file.exists():
+        load_dotenv(env_file)
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Loaded environment variables from {env_file}")
+    else:
+        # Also check parent directory
+        parent_env = script_dir.parent / ".env"
+        if parent_env.exists():
+            load_dotenv(parent_env)
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Loaded environment variables from {parent_env}")
+except ImportError:
+    # python-dotenv not installed, continue without .env support
+    pass
 
 # Check if running in interactive mode
 def is_interactive():
@@ -76,16 +99,119 @@ class AgentResult:
     tool_failure_details: List[str] = field(default_factory=list)
 
 
+# Validation functions (module level, not class methods)
+async def validate_anthropic_key(api_key: str) -> tuple[bool, str]:
+    """
+    Validate Anthropic API key by making a test API call.
+    
+    Returns:
+        (is_valid, message) - True if key is valid, False otherwise with error message
+    """
+    if not api_key or not api_key.strip():
+        return False, "API key is empty"
+    
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Make a minimal API call to validate the key
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-3-haiku-20240307",  # Cheapest model for validation
+                    "max_tokens": 10,
+                    "messages": [{"role": "user", "content": "test"}]
+                }
+            )
+            
+            if response.status_code == 200:
+                return True, "✓ Valid and active"
+            elif response.status_code == 401:
+                return False, "❌ Invalid or expired (401 Unauthorized)"
+            elif response.status_code == 403:
+                return False, "❌ Forbidden - check API key permissions (403)"
+            elif response.status_code == 429:
+                return True, "⚠️ Valid but rate limited (429)"
+            else:
+                return False, f"❌ API error: {response.status_code} - {response.text[:100]}"
+    except httpx.TimeoutException:
+        return False, "❌ Validation timeout - key may be invalid or network issue"
+    except Exception as e:
+        return False, f"❌ Validation error: {str(e)[:100]}"
+
+
+async def validate_openai_key(api_key: str) -> tuple[bool, str]:
+    """
+    Validate OpenAI API key by making a test API call.
+    
+    Returns:
+        (is_valid, message) - True if key is valid, False otherwise with error message
+    """
+    if not api_key or not api_key.strip():
+        return False, "API key is empty"
+    
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Make a minimal API call to validate the key
+            response = await client.get(
+                "https://api.openai.com/v1/models",
+                headers={
+                    "Authorization": f"Bearer {api_key}"
+                }
+            )
+            
+            if response.status_code == 200:
+                return True, "✓ Valid and active"
+            elif response.status_code == 401:
+                return False, "❌ Invalid or expired (401 Unauthorized)"
+            elif response.status_code == 403:
+                return False, "❌ Forbidden - check API key permissions (403)"
+            elif response.status_code == 429:
+                return True, "⚠️ Valid but rate limited (429)"
+            else:
+                return False, f"❌ API error: {response.status_code} - {response.text[:100]}"
+    except httpx.TimeoutException:
+        return False, "❌ Validation timeout - key may be invalid or network issue"
+    except Exception as e:
+        return False, f"❌ Validation error: {str(e)[:100]}"
+
+
+async def validate_api_keys() -> Dict[str, tuple[bool, str]]:
+    """
+    Validate all API keys found in environment.
+    
+    Returns:
+        Dictionary mapping key name to (is_valid, message) tuple
+    """
+    results = {}
+    
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    if anthropic_key:
+        results["ANTHROPIC_API_KEY"] = await validate_anthropic_key(anthropic_key)
+    
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if openai_key:
+        results["OPENAI_API_KEY"] = await validate_openai_key(openai_key)
+    
+    return results
+
+
 class AgentRunner:
     """Runs tasks across multiple agents."""
     
-    def __init__(self, mcp_url: str, auth_header: Optional[str] = None, progress_callback=None, interactive_prompt=None, temperature: Optional[float] = None, target_identifier: Optional[str] = None):
+    def __init__(self, mcp_url: str, auth_header: Optional[str] = None, progress_callback=None, interactive_prompt=None, temperature: Optional[float] = None, target_identifier: Optional[str] = None, openai_model: Optional[str] = None):
         self.mcp_url = mcp_url
         self.auth_header = auth_header
         self.results: List[AgentResult] = []
         self.progress_callback = progress_callback
         self.interactive_prompt = interactive_prompt  # Function to get user input during execution
         self.temperature = temperature  # Temperature for model generation (0.0-2.0)
+        self.openai_model = openai_model  # OpenAI model to use (e.g., gpt-4o, gpt-4o-mini)
         # Generic target identifier (e.g., channel ID, user ID, etc.) - configurable via env var
         self.target_identifier = target_identifier or os.environ.get("MCP_TARGET_IDENTIFIER", "")
         self.pending_user_input = None  # Store user input received during execution
@@ -94,6 +220,9 @@ class AgentRunner:
         self.input_queue = None  # Queue for agent input requests
         self.input_responses = None  # Dict mapping agent_name -> response
         self.input_event = None  # Event to signal new input available
+        # MCP server capabilities (discovered dynamically)
+        self.mcp_capabilities: Dict[str, Any] = {}
+        self.mcp_tools: List[str] = []
     
     def _update_progress(self, agent_name: str, status: str):
         """Update progress callback if available."""
@@ -196,11 +325,31 @@ If a task seems to require creating new entities or taking actions outside the e
                 # Minimal instructions - let the agent be autonomous
                 # Add agent identification requirement and task completion requirement
                 #
-                # User reference instructions
-                user_reference = "IMPORTANT: When the task refers to 'me', 'myself', 'I', or 'the user', you should interpret this as referring to 'the user', 'self', or 'the system owner'. All messages, information, and outputs should be directed to the user (self). When the task says 'send to me' or 'DM me', it means send to the user (self) via the specified channel."
-                #
-                # CRITICAL: Explicit target restriction - ONLY D025N5FN3RT on Slack
-                target_restriction = "CRITICAL: For ALL messages on Slack, you MUST use channel ID D025N5FN3RT. This is the ONLY channel you are allowed to use. Do NOT use any other channel ID. Do NOT search for users. Do NOT find users. Do NOT message anyone else. ONLY D025N5FN3RT. When using chatPostMessage or any messaging tool, the channel parameter MUST be 'D025N5FN3RT'. No exceptions."
+                # User discovery and identification instructions
+                user_discovery = """CRITICAL: USER DISCOVERY PROTOCOL
+
+Before sending messages or executing actions that target a specific user, you MUST:
+
+1. DISCOVER THE USER'S INFORMATION FIRST:
+   - Use available MCP tools to identify the current user (the person making the request)
+   - For messaging systems: Find the user's ID, channel ID, or direct message channel
+   - For other systems: Identify the user's account, workspace, or context
+   - DO NOT assume or hardcode any user IDs, channel IDs, or identifiers
+
+2. VERIFY USER CONTEXT:
+   - Confirm you have the correct user information before proceeding
+   - If the task says "send to me" or "DM me", discover the user's direct message channel first
+   - Use the discovered information to target the correct recipient
+
+3. THEN EXECUTE:
+   - Only after discovering the user's specific information should you send messages or execute actions
+   - Use the discovered identifiers (user ID, channel ID, etc.) in your tool calls
+   - Never use hardcoded or assumed identifiers
+
+Example workflow:
+- Step 1: Use tools like usersList, conversationsList, or similar to find the current user's information
+- Step 2: Identify the user's channel ID, user ID, or other relevant identifier
+- Step 3: Use that discovered identifier to send messages or execute the requested action"""
                 
                 # Clarification instructions - agent determines if clarification is needed
                 clarification_instructions = """CLARIFICATION PROTOCOL: Before executing the task, analyze if the task is clear and complete. If the task is unclear, ambiguous, or missing critical information needed for execution, you MUST request clarification from the user.
@@ -214,22 +363,22 @@ Examples:
 
 After requesting clarification, wait for the user's response, then proceed with the clarified task. Only proceed with execution when you have all necessary information."""
                 
-                # Task completion instructions with explicit message sending requirement
+                # Task completion instructions
                 task_completion = """CRITICAL TASK COMPLETION REQUIREMENTS:
 
-1. If the task requires sending a message to Slack, you MUST:
-   - Use the chatPostMessage tool
-   - Set channel parameter to 'D025N5FN3RT' (this is the ONLY allowed channel)
+1. If the task requires sending a message or targeting a user, you MUST:
+   - FIRST: Discover the user's information using available MCP tools (usersList, conversationsList, etc.)
+   - THEN: Use the discovered user/channel identifiers in your tool calls
    - Actually execute the tool call - do not just describe what you would do
-   - Verify the message was sent successfully before reporting completion
+   - Verify the action was completed successfully before reporting completion
 
-3. You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation).
+2. You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation).
 
-4. If you encounter an error, report it clearly in your output so the user understands what went wrong. Still attempt at least one tool call even if errors occur.
+3. If you encounter an error, report it clearly in your output so the user understands what went wrong. Still attempt at least one tool call even if errors occur.
 
-5. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
+4. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
                 
-                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\n{task_completion}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'"
+                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_discovery}\n\n{clarification_instructions}\n\n{task_completion}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Anthropic Agent: ' followed by your message. Example: 'Anthropic Agent: My favorite color is Red.'"
                 
                 self._update_progress("Anthropic Agent", "Interpreting and executing task...")
                 output_parts = []
@@ -242,45 +391,146 @@ After requesting clarification, wait for the user's response, then proceed with 
                 
                 while clarification_rounds <= max_clarification_rounds:
                     agent_output = ""
-                    async for message in query(prompt=current_task, options=options):
-                        if hasattr(message, 'content'):
-                            for block in message.content:
-                                if hasattr(block, 'text'):
-                                    text = block.text
-                                    output_parts.append(text)
-                                    agent_output += text
-                                    message_count += 1
-                                    
-                                    # Show progress in real-time
-                                    if len(output_parts) > 0:
-                                        self._update_progress("Anthropic Agent", f"Working... ({message_count} messages)")
+                    clarification_found = False
+                    # Collect messages and check for clarification during collection
+                    # IMPORTANT: Let the generator finish naturally to avoid RuntimeError with cancel scopes
+                    try:
+                        async for message in query(prompt=current_task, options=options):
+                            # If we already found clarification, skip processing but let generator finish
+                            if clarification_found:
+                                continue
+                                
+                            if hasattr(message, 'content'):
+                                for block in message.content:
+                                    if hasattr(block, 'text'):
+                                        text = block.text
+                                        output_parts.append(text)
+                                        agent_output += text
+                                        message_count += 1
+                                        
+                                        # Check for clarification request IMMEDIATELY after each text block
+                                        if "CLARIFICATION_NEEDED:" in agent_output and not clarification_found:
+                                            clarification_found = True
+                                            # Don't break - let generator finish naturally to avoid RuntimeError
+                                            # We'll handle clarification after the loop
+                                        
+                                        # Show progress in real-time
+                                        if len(output_parts) > 0 and not clarification_found:
+                                            self._update_progress("Anthropic Agent", f"Working... ({message_count} messages)")
+                    except GeneratorExit:
+                        # Generator was closed - this is expected when breaking early
+                        # Don't treat as error, we may have partial output
+                        pass
+                    except RuntimeError as e:
+                        # Handle cancel scope errors gracefully (from anyio)
+                        if "cancel scope" in str(e).lower():
+                            # This is expected when generator is closed - ignore it
+                            pass
+                        else:
+                            # Other RuntimeError - log but continue
+                            if "CLARIFICATION_NEEDED:" not in agent_output:
+                                console.print(f"[yellow]Warning during message collection: {e}[/yellow]")
+                    except Exception as e:
+                        # Log but don't fail - we may have partial output
+                        error_msg = str(e)
+                        # Don't log cancel scope errors - they're expected
+                        if "cancel scope" not in error_msg.lower() and "CLARIFICATION_NEEDED:" not in agent_output:
+                            console.print(f"[yellow]Warning during message collection: {e}[/yellow]")
+                        # If we got clarification, continue processing it
+                        if "CLARIFICATION_NEEDED:" in agent_output:
+                            clarification_found = True
                     
-                    # Check if agent requested clarification
-                    if "CLARIFICATION_NEEDED:" in agent_output and self.interactive_prompt:
+                    # Check if agent requested clarification (after message collection)
+                    if "CLARIFICATION_NEEDED:" in agent_output or clarification_found:
+                        if not clarification_found:
+                            clarification_found = True
+                        # CRITICAL: Check if interactive_prompt is available
+                        if not self.interactive_prompt:
+                            console.print("[red]⚠️  WARNING: Agent requested clarification but interactive_prompt is not available![/red]")
+                            console.print("[yellow]Clarification request:[/yellow]")
+                            clarification_match = agent_output.split("CLARIFICATION_NEEDED:")[-1].strip()
+                            if "\n" in clarification_match:
+                                clarification_match = clarification_match.split("\n")[0].strip()
+                            console.print(f"[cyan]{clarification_match}[/cyan]")
+                            break
+                        
                         # Extract the question
                         clarification_match = agent_output.split("CLARIFICATION_NEEDED:")[-1].strip()
+                        # Clean up the match - remove any trailing text that might be after the question
+                        if "\n" in clarification_match:
+                            clarification_match = clarification_match.split("\n")[0].strip()
                         if clarification_match:
                             # Show agent's question and get user response
+                            console.print()  # Add spacing
+                            console.print(Panel(
+                                f"[bold cyan]🤖 Anthropic Agent needs clarification:[/bold cyan]\n\n{clarification_match}",
+                                title="Clarification Request",
+                                border_style="cyan"
+                            ))
+                            console.print()
+                            
+                            # Simple input prompt - cursor appears right after this text
+                            console.print("[bold yellow]Your response: [/bold yellow]", end="")
+                            import sys
+                            sys.stdout.flush()
+                            
                             try:
-                                clarification_prompt = f"[bold cyan]Anthropic Agent asks:[/bold cyan] {clarification_match}\n[yellow]Your response: [/yellow]"
-                                user_response = await asyncio.to_thread(
-                                    self.interactive_prompt,
-                                    clarification_prompt
-                                )
+                                # Check if interactive_prompt is async or sync
+                                # Try to call it and check if result is a coroutine
+                                prompt_result = self.interactive_prompt("")
+                                if inspect.iscoroutine(prompt_result):
+                                    # It's async - await it
+                                    user_response = await prompt_result
+                                elif inspect.iscoroutinefunction(self.interactive_prompt):
+                                    # Function is async but we got a coroutine - await it
+                                    user_response = await prompt_result
+                                else:
+                                    # It's sync - use the result directly
+                                    user_response = prompt_result
+                                
+                                # Ensure user_response is a string (handle coroutine objects that weren't awaited)
+                                if inspect.iscoroutine(user_response):
+                                    console.print("[red]ERROR: Got coroutine object instead of string! This is a bug.[/red]")
+                                    user_response = ""
+                                if user_response is None:
+                                    user_response = ""
+                                user_response = str(user_response)
+                                
                                 if user_response and user_response.strip():
-                                    # Add clarification to task and continue
-                                    current_task = f"{current_task}\n\n[User clarification: {user_response.strip()}]"
+                                    # Add clarification to task in a clear format that the agent will understand
+                                    # Make it explicit so the agent doesn't ask again
+                                    clarification_text = user_response.strip()
+                                    # Format clarification to be very explicit and prevent looping
+                                    current_task = f"""{current_task}
+
+CRITICAL USER CLARIFICATION - USE THIS INFORMATION NOW:
+{clarification_text}
+
+IMPORTANT: The user has provided the above clarification. You MUST use this information to complete the task. Do NOT ask for clarification again on this topic. If the clarification mentions a channel, use that channel. If it mentions a message, use that message. Proceed with execution using this information."""
                                     clarification_rounds += 1
+                                    # Keep output_parts to show what was said before clarification
+                                    # But reset agent_output for the next round
+                                    agent_output = ""
+                                    console.print()  # New line after input
+                                    console.print(f"[green]✓ Received: {clarification_text}[/green]")
+                                    console.print("[dim]Continuing with clarification...[/dim]\n")
                                     # Continue loop to re-execute with clarification
                                     continue
                                 else:
                                     # User pressed Enter - proceed anyway
+                                    console.print("[yellow]No response provided, proceeding anyway...[/yellow]\n")
                                     break
                             except (EOFError, KeyboardInterrupt):
+                                console.print("\n[yellow]Clarification cancelled, proceeding...[/yellow]\n")
+                                break
+                            except Exception as e:
+                                console.print(f"[red]Error getting clarification: {e}[/red]")
+                                console.print("[yellow]Proceeding without clarification...[/yellow]\n")
                                 break
                     
                     # No clarification needed or max rounds reached - break
-                    break
+                    if not clarification_found:
+                        break
                 
                 step.finish()
                 
@@ -288,10 +538,71 @@ After requesting clarification, wait for the user's response, then proceed with 
                 # Calculate KPIs
                 output_str = "\n".join(output_parts)
                 output_lower = output_str.lower()
-                tool_calls_count = output_str.count("tool") + output_str.count("mcp")
-                message_sent = "message" in output_lower and ("sent" in output_lower or "posted" in output_lower or "delivered" in output_lower)
-                target_reached = self.mcp_url in output_str or "channel" in output_lower or "dm" in output_lower
+                
+                # Better tool call detection - look for actual tool usage
+                tool_calls_count = (
+                    output_str.count("tool") + 
+                    output_str.count("mcp") +
+                    output_str.count("chatPostMessage") +
+                    output_str.count("conversationsHistory") +
+                    output_str.count("searchMessages") +
+                    output_str.count("usersList")
+                )
+                
+                # Better message sent detection - check for multiple indicators (same as Langchain)
+                message_sent = (
+                    # Text-based detection
+                    ("message" in output_lower and 
+                     ("sent" in output_lower or "posted" in output_lower or "delivered" in output_lower or "success" in output_lower) and
+                     ("error" not in output_lower or "failed" not in output_lower))
+                    # Tool-based detection
+                    or "chatpostmessage" in output_lower
+                    # API response detection - look for successful API responses
+                    or ('"ok":true' in output_str or '"ok": true' in output_str)
+                    # Channel ID in response (indicates message was sent to correct channel)
+                    or (self.target_identifier and self.target_identifier in output_str and "channel" in output_lower)
+                )
+                
+                # Better target reached detection - generic
+                target_reached = (
+                    (self.target_identifier and self.target_identifier in output_str) or
+                    self.mcp_url in output_str or 
+                    "channel" in output_lower or 
+                    "dm" in output_lower or
+                    "direct message" in output_lower or
+                    "target" in output_lower
+                )
                 safety_followed = "public" not in output_lower and "general" not in output_lower
+                
+                # Generate failure explanations (same as Langchain)
+                message_failure_reason = None
+                target_failure_reason = None
+                tool_failure_details = []
+                
+                if not message_sent:
+                    if tool_calls_count == 0:
+                        message_failure_reason = "No tools were called. Agent may not have attempted to send message."
+                    elif "error" in output_lower or "failed" in output_lower:
+                        error_keywords = ["error", "failed", "exception", "unauthorized", "forbidden", "not found"]
+                        for keyword in error_keywords:
+                            if keyword in output_lower:
+                                idx = output_lower.find(keyword)
+                                snippet = output_str[max(0, idx-50):idx+100]
+                                message_failure_reason = f"Error detected: {snippet[:100]}..."
+                                break
+                        if not message_failure_reason:
+                            message_failure_reason = "Message sending failed (error detected in output)."
+                    else:
+                        message_failure_reason = "Message sending not confirmed. Check agent output for details."
+                
+                if not target_reached:
+                    if self.target_identifier and self.target_identifier not in output_str:
+                        target_failure_reason = f"Target channel {self.target_identifier} not referenced. Agent may not have used correct channel."
+                    else:
+                        target_failure_reason = "Target reached status unclear. Check agent output."
+                
+                if tool_calls_count == 0:
+                    tool_failure_details.append("No tool calls detected. Agent may not have executed required actions.")
                 
                 return AgentResult(
                     agent_name="Anthropic Agent",
@@ -418,35 +729,31 @@ If a task seems to require creating new entities or taking actions outside the e
                         # DO NOT allow agents to search for users or message anyone except the specified channel.
                         # This restriction MUST be explicit and repeated to prevent unwanted messaging.
                         #
-                        # User reference instructions
-                        user_reference = "IMPORTANT: When the task refers to 'me', 'myself', 'I', or 'the user', you should interpret this as referring to 'the user', 'self', or 'the system owner'. All messages, information, and outputs should be directed to the user (self). When the task says 'send to me' or 'DM me', it means send to the user (self) via the specified channel."
-                        #
-                        # CRITICAL: Explicit target restriction - ONLY D025N5FN3RT on Slack
-                        target_restriction = "CRITICAL: For ALL messages on Slack, you MUST use channel ID D025N5FN3RT. This is the ONLY channel you are allowed to use. Do NOT use any other channel ID. Do NOT search for users. Do NOT find users. Do NOT message anyone else. ONLY D025N5FN3RT. When using chatPostMessage or any messaging tool, the channel parameter MUST be 'D025N5FN3RT'. No exceptions."
-                        
-                        # Task completion instructions with explicit message sending requirement
-                        task_completion = """CRITICAL TASK COMPLETION REQUIREMENTS:
+                        # User discovery and identification instructions
+                        user_discovery = """CRITICAL: USER DISCOVERY PROTOCOL
 
-1. MCP SERVER DEMONSTRATION: You MUST make at least ONE tool call to demonstrate MCP server capabilities. Even if the task cannot be fully completed, you should:
-   - List available tools using MCP server tools
-   - Attempt to call at least one tool (e.g., conversationsList, searchMessages, chatPostMessage)
-   - Show that you can interact with the MCP server
-   - This is a demonstration of MCP server integration, so tool calls are essential
+Before sending messages or executing actions that target a specific user, you MUST:
 
-2. If the task requires sending a message, you MUST:
-   - Use the appropriate messaging tool (e.g., chatPostMessage)
-   - Set the target parameter to the specified target identifier (if provided)
-   - Actually execute the tool call - do not just describe what you would do
-   - Verify the message was sent successfully before reporting completion
+1. DISCOVER THE USER'S INFORMATION FIRST:
+   - Use available MCP tools to identify the current user (the person making the request)
+   - For messaging systems: Find the user's ID, channel ID, or direct message channel
+   - For other systems: Identify the user's account, workspace, or context
+   - DO NOT assume or hardcode any user IDs, channel IDs, or identifiers
 
-3. You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation).
+2. VERIFY USER CONTEXT:
+   - Confirm you have the correct user information before proceeding
+   - If the task says "send to me" or "DM me", discover the user's direct message channel first
+   - Use the discovered information to target the correct recipient
 
-4. If you encounter an error, report it clearly in your output so the user understands what went wrong. Still attempt at least one tool call even if errors occur.
+3. THEN EXECUTE:
+   - Only after discovering the user's specific information should you send messages or execute actions
+   - Use the discovered identifiers (user ID, channel ID, etc.) in your tool calls
+   - Never use hardcoded or assumed identifiers
 
-5. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
-                        
-                        task_with_id = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\n{task_completion}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
-                        current_task = task_with_id
+Example workflow:
+- Step 1: Use tools like usersList, conversationsList, or similar to find the current user's information
+- Step 2: Identify the user's channel ID, user ID, or other relevant identifier
+- Step 3: Use that discovered identifier to send messages or execute the requested action"""
                         
                         # Clarification instructions - agent determines if clarification is needed
                         clarification_instructions = """CLARIFICATION PROTOCOL: Before executing the task, analyze if the task is clear and complete. If the task is unclear, ambiguous, or missing critical information needed for execution, you MUST request clarification from the user.
@@ -460,7 +767,28 @@ Examples:
 
 After requesting clarification, wait for the user's response, then proceed with the clarified task. Only proceed with execution when you have all necessary information."""
                         
-                        task_with_id = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
+                        # Task completion instructions
+                        task_completion = """CRITICAL TASK COMPLETION REQUIREMENTS:
+
+1. MCP SERVER DEMONSTRATION: You MUST make at least ONE tool call to demonstrate MCP server capabilities. Even if the task cannot be fully completed, you should:
+   - List available tools using MCP server tools
+   - Attempt to call at least one tool (e.g., conversationsList, searchMessages, chatPostMessage)
+   - Show that you can interact with the MCP server
+   - This is a demonstration of MCP server integration, so tool calls are essential
+
+2. If the task requires sending a message or targeting a user, you MUST:
+   - FIRST: Discover the user's information using available MCP tools (usersList, conversationsList, etc.)
+   - THEN: Use the discovered user/channel identifiers in your tool calls
+   - Actually execute the tool call - do not just describe what you would do
+   - Verify the action was completed successfully before reporting completion
+
+3. You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation).
+
+4. If you encounter an error, report it clearly in your output so the user understands what went wrong. Still attempt at least one tool call even if errors occur.
+
+5. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
+                        
+                        task_with_id = f"{task}\n\n{code_of_conduct}\n\n{user_discovery}\n\n{clarification_instructions}\n\n{task_completion}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'Langchain Agent: ' followed by your message. Example: 'Langchain Agent: My favorite color is Red.'"
                         current_task = task_with_id
                         
                         # Execute task - agent will request clarification if needed
@@ -474,7 +802,7 @@ After requesting clarification, wait for the user's response, then proceed with 
                             try:
                                 result = await asyncio.wait_for(
                                     agent.ainvoke({"messages": messages}),
-                                    timeout=60.0  # 1 minute timeout - faster execution
+                                    timeout=180.0  # 3 minute timeout - allows time for clarification and MCP operations
                                 )
                             except asyncio.TimeoutError:
                                 output_parts.append("Error: Agent execution timed out after 1 minute")
@@ -495,29 +823,98 @@ After requesting clarification, wait for the user's response, then proceed with 
                                 output_parts.append(str(result))
                                 agent_output = str(result)
                             
+                            # Verify message was actually sent by checking for success indicators
+                            if "chatPostMessage" in agent_output.lower() or "chatpostmessage" in agent_output.lower():
+                                # Check if we got a successful response
+                                import json
+                                try:
+                                    # Look for JSON response with "ok":true
+                                    if '"ok":true' in agent_output or '"ok": true' in agent_output:
+                                        # Try to extract channel and timestamp
+                                        if self.target_identifier and f'"{self.target_identifier}' in agent_output:
+                                            output_parts.append(f"\n✅ Message verification: API returned success for target {self.target_identifier}")
+                                        elif '"ok":true' in agent_output or '"ok": true' in agent_output:
+                                            output_parts.append(f"\n✅ Message verification: API returned success")
+                                        else:
+                                            output_parts.append(f"\n⚠️  Message verification: API returned success but target may differ. Check output manually.")
+                                    else:
+                                        output_parts.append(f"\n⚠️  Message verification: API response may indicate failure. Check output above.")
+                                except:
+                                    pass
+                            
                             # Check if agent requested clarification
                             if "CLARIFICATION_NEEDED:" in agent_output and self.interactive_prompt:
                                 # Extract the question
                                 clarification_match = agent_output.split("CLARIFICATION_NEEDED:")[-1].strip()
+                                # Clean up the match - remove any trailing text that might be after the question
+                                if "\n" in clarification_match:
+                                    clarification_match = clarification_match.split("\n")[0].strip()
                                 if clarification_match:
                                     # Show agent's question and get user response
-                                    try:
-                                        clarification_prompt = f"[bold cyan]Langchain Agent asks:[/bold cyan] {clarification_match}\n[yellow]Your response: [/yellow]"
-                                        user_response = await asyncio.to_thread(
-                                            self.interactive_prompt,
-                                            clarification_prompt
-                                        )
-                                        if user_response and user_response.strip():
-                                            # Add clarification to task and continue
-                                            current_task = f"{current_task}\n\n[User clarification: {user_response.strip()}]"
-                                            clarification_rounds += 1
-                                            # Continue loop to re-execute with clarification
-                                            continue
-                                        else:
-                                            # User pressed Enter - proceed anyway
-                                            break
-                                    except (EOFError, KeyboardInterrupt):
-                                        break
+                                    console.print()  # Add spacing
+                                    console.print(Panel(
+                                        f"[bold cyan]🤖 Langchain Agent needs clarification:[/bold cyan]\n\n{clarification_match}",
+                                        title="Clarification Request",
+                                        border_style="green"
+                                    ))
+                            console.print()
+                            
+                            # Simple input prompt - cursor appears right after this text
+                            console.print("[bold yellow]Your response: [/bold yellow]", end="")
+                            import sys
+                            sys.stdout.flush()
+                            
+                            try:
+                                # Check if interactive_prompt is async or sync
+                                # Try to call it and check if result is a coroutine
+                                prompt_result = self.interactive_prompt("")
+                                if inspect.iscoroutine(prompt_result):
+                                    # It's async - await it
+                                    user_response = await prompt_result
+                                elif inspect.iscoroutinefunction(self.interactive_prompt):
+                                    # Function is async but we got a coroutine - await it
+                                    user_response = await prompt_result
+                                else:
+                                    # It's sync - use the result directly
+                                    user_response = prompt_result
+                                
+                                # Ensure user_response is a string (handle coroutine objects that weren't awaited)
+                                if inspect.iscoroutine(user_response):
+                                    console.print("[red]ERROR: Got coroutine object instead of string! This is a bug.[/red]")
+                                    user_response = ""
+                                if user_response is None:
+                                    user_response = ""
+                                user_response = str(user_response)
+                                
+                                if user_response and user_response.strip():
+                                    # Add clarification to task in a clear format that the agent will understand
+                                    # Make it explicit so the agent doesn't ask again
+                                    clarification_text = user_response.strip()
+                                    # Format clarification to be very explicit and prevent looping
+                                    current_task = f"""{current_task}
+
+CRITICAL USER CLARIFICATION - USE THIS INFORMATION NOW:
+{clarification_text}
+
+IMPORTANT: The user has provided the above clarification. You MUST use this information to complete the task. Do NOT ask for clarification again on this topic. If the clarification mentions a channel, use that channel. If it mentions a message, use that message. Proceed with execution using this information."""
+                                    clarification_rounds += 1
+                                    agent_output = ""  # Reset for next round
+                                    console.print()  # New line after input
+                                    console.print(f"[green]✓ Received: {clarification_text}[/green]")
+                                    console.print("[dim]Continuing with clarification...[/dim]\n")
+                                    # Continue loop to re-execute with clarification
+                                    continue
+                                else:
+                                    # User pressed Enter - proceed anyway
+                                    console.print("[yellow]No response provided, proceeding anyway...[/yellow]\n")
+                                    break
+                            except (EOFError, KeyboardInterrupt):
+                                console.print("\n[yellow]Clarification cancelled, proceeding...[/yellow]\n")
+                                break
+                            except Exception as e:
+                                console.print(f"[red]Error getting clarification: {e}[/red]")
+                                console.print("[yellow]Proceeding without clarification...[/yellow]\n")
+                                break
                             
                             # No clarification needed or max rounds reached - break
                             break
@@ -535,7 +932,37 @@ After requesting clarification, wait for the user's response, then proceed with 
                         except:
                             pass
                 
-                await run_agent_session(config, on_ready)
+                # Add timeout to MCP connection to prevent hanging (300+ second issue)
+                # Increased timeout to allow for clarification prompts (2 minutes) + MCP connection time
+                try:
+                    await asyncio.wait_for(
+                        run_agent_session(config, on_ready, storage=storage),
+                        timeout=300.0  # 5 minute timeout for entire MCP connection + setup + clarification (allows 2 min for clarification)
+                    )
+                except asyncio.TimeoutError:
+                    step.finish()
+                    self._update_progress("Langchain Agent", "❌ MCP connection timed out")
+                    return AgentResult(
+                        agent_name="Langchain Agent",
+                        success=False,
+                        output="",
+                        error="MCP connection timed out after 3 minutes. Server may be unresponsive or OAuth flow took too long.",
+                        timing_steps=timing_steps
+                    )
+                except Exception as e:
+                    step.finish()
+                    error_msg = str(e)
+                    # Don't show cancel scope errors to user - they're internal
+                    if "cancel scope" in error_msg.lower():
+                        error_msg = "MCP connection error (internal)"
+                    self._update_progress("Langchain Agent", f"❌ Error: {error_msg[:50]}")
+                    return AgentResult(
+                        agent_name="Langchain Agent",
+                        success=False,
+                        output="",
+                        error=error_msg,
+                        timing_steps=timing_steps
+                    )
                 if timing_steps and not timing_steps[-1].end_time:
                     timing_steps[-1].finish()
                 
@@ -593,8 +1020,8 @@ After requesting clarification, wait for the user's response, then proceed with 
                         message_failure_reason = "Message sending not confirmed. Check agent output for details."
                 
                 if not target_reached:
-                    if "D025N5FN3RT" not in output_str:
-                        target_failure_reason = "Target channel D025N5FN3RT not referenced. Agent may not have used correct channel."
+                    if self.target_identifier and self.target_identifier not in output_str:
+                        target_failure_reason = f"Target identifier {self.target_identifier} not referenced. Agent may not have used correct target."
                     else:
                         target_failure_reason = "Target reached status unclear. Check agent output."
                 
@@ -646,8 +1073,15 @@ After requesting clarification, wait for the user's response, then proceed with 
             original_path = sys.path[:]
             sys.path.insert(0, openai_path)
             try:
-                # Import from openai_agent directory
-                from mcp_config import build_mcp_server
+                # Import from openai_agent directory - use absolute import to avoid conflicts
+                import importlib.util
+                mcp_config_path = os.path.join(openai_path, "mcp_config.py")
+                spec = importlib.util.spec_from_file_location("openai_mcp_config", mcp_config_path)
+                openai_mcp_config = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(openai_mcp_config)
+                build_mcp_server = openai_mcp_config.build_mcp_server
+                
+                # Import auth and agents normally
                 from auth.oauth import create_oauth_provider, CallbackServer, InMemoryTokenStorage
                 from agents import Agent, Runner
             finally:
@@ -687,18 +1121,155 @@ After requesting clarification, wait for the user's response, then proceed with 
                     storage=storage
                 )
                 
-                await mcp_server.connect()
+                # Connect with timeout to prevent hanging
+                # Add detailed error logging to diagnose ClientRequest timeout
+                try:
+                    # Enable detailed logging for MCP and httpx to trace the 5.0s timeout
+                    import logging
+                    mcp_logger = logging.getLogger("agents.mcp")
+                    httpx_logger = logging.getLogger("httpx")
+                    mcp_logger.setLevel(logging.DEBUG)
+                    httpx_logger.setLevel(logging.DEBUG)
+                    
+                    self._update_progress("OpenAI Agent", "Connecting to MCP server (this may take a moment)...")
+                    console.print("[dim]🔍 DEBUG: About to call mcp_server.connect()...[/dim]")
+                    console.print(f"[dim]   MCP URL: {self.mcp_url}[/dim]")
+                    console.print(f"[dim]   Params timeout: {mcp_server._params.get('timeout', 'N/A') if hasattr(mcp_server, '_params') else 'N/A'}[/dim]")
+                    
+                    # Wrap connect() with detailed error handling
+                    try:
+                        console.print("[dim]   Calling mcp_server.connect() - watch for httpx DEBUG logs...[/dim]")
+                        console.print("[dim]   If you see 'FACTORY CALL #' in logs, the factory is being used[/dim]")
+                        console.print("[dim]   If you see 5.0s timeout, the factory may not be called[/dim]")
+                        console.print()
+                        
+                        await asyncio.wait_for(
+                            mcp_server.connect(),
+                            timeout=120.0  # Increased to 2 minutes to allow for slow initial connection
+                        )
+                        self._update_progress("OpenAI Agent", "✓ MCP connection established")
+                        console.print("[green]✓ Connection successful - no timeout errors[/green]")
+                    except Exception as connect_error:
+                        # Log the exact error and stack trace
+                        import traceback
+                        error_trace = traceback.format_exc()
+                        error_str = str(connect_error)
+                        
+                        console.print()
+                        console.print(f"[red]❌ Error during mcp_server.connect():[/red]")
+                        console.print(f"[red]{error_str}[/red]")
+                        
+                        # Check if it's the 5.0 second timeout
+                        if "5.0" in error_str or "ClientRequest" in error_str:
+                            console.print()
+                            console.print("[yellow]⚠️  DIAGNOSIS: 5.0 SECOND TIMEOUT DETECTED[/yellow]")
+                            console.print("[yellow]=" * 60 + "[/yellow]")
+                            console.print("[yellow]Root Cause Analysis:[/yellow]")
+                            console.print("[yellow]  1. The error 'Timed out while waiting for response to ClientRequest. Waited 5.0 seconds'[/yellow]")
+                            console.print("[yellow]     indicates httpx is using its default 5.0 second timeout[/yellow]")
+                            console.print()
+                            console.print("[yellow]  2. This suggests:[/yellow]")
+                            console.print("[yellow]     • httpx_client_factory may not be called by the SDK[/yellow]")
+                            console.print("[yellow]     • OR the SDK creates httpx clients before calling the factory[/yellow]")
+                            console.print("[yellow]     • OR there's a request made without using our custom client[/yellow]")
+                            console.print()
+                            console.print("[yellow]  3. Check the logs above for:[/yellow]")
+                            console.print("[yellow]     • 'FACTORY CALL #' messages - confirms factory is called[/yellow]")
+                            console.print("[yellow]     • httpx DEBUG logs showing actual timeout values used[/yellow]")
+                            console.print("[yellow]     • Any requests made with 5.0s timeout[/yellow]")
+                            console.print()
+                            console.print("[yellow]  4. Possible solutions:[/yellow]")
+                            console.print("[yellow]     • Verify httpx_client_factory parameter name is correct[/yellow]")
+                            console.print("[yellow]     • Check if SDK version supports httpx_client_factory[/yellow]")
+                            console.print("[yellow]     • May need to patch httpx default timeout globally[/yellow]")
+                            console.print("[yellow]=" * 60 + "[/yellow]")
+                        
+                        console.print()
+                        console.print(f"[dim]Full traceback:[/dim]")
+                        console.print(f"[dim]{error_trace}[/dim]")
+                        
+                        raise  # Re-raise to be caught by outer handler
+                except asyncio.TimeoutError:
+                    step.finish()
+                    self._update_progress("OpenAI Agent", "❌ MCP connection timed out")
+                    return AgentResult(
+                        agent_name="OpenAI Agent",
+                        success=False,
+                        output="",
+                        error="MCP connection timed out after 2 minutes. Server may be unresponsive or initial handshake is slow.",
+                        timing_steps=timing_steps
+                    )
+                except RuntimeError as e:
+                    # Handle cancel scope errors gracefully (from anyio)
+                    error_msg = str(e)
+                    if "cancel scope" in error_msg.lower():
+                        # This is expected when generator is closed - ignore it and continue
+                        # Connection may have succeeded before the error, continue
+                        pass
+                    else:
+                        step.finish()
+                        # Log full error for debugging
+                        import traceback
+                        error_details = traceback.format_exc()
+                        console.print(f"[dim]Full error trace: {error_details}[/dim]")
+                        self._update_progress("OpenAI Agent", f"❌ Connection error: {error_msg[:50]}")
+                        return AgentResult(
+                            agent_name="OpenAI Agent",
+                            success=False,
+                            output="",
+                            error=f"{error_msg} (Full trace in logs)",
+                            timing_steps=timing_steps
+                        )
+                except Exception as e:
+                    step.finish()
+                    error_msg = str(e)
+                    # Log full error for debugging ClientRequest timeout
+                    import traceback
+                    error_details = traceback.format_exc()
+                    console.print(f"[dim]Full error trace: {error_details}[/dim]")
+                    
+                    # Check if it's the specific ClientRequest timeout
+                    if "ClientRequest" in error_msg and "5.0" in error_msg:
+                        console.print("[yellow]⚠️  ClientRequest timeout detected - this suggests the httpx client factory may not be applied correctly[/yellow]")
+                        console.print("[yellow]   The default 5.0 second timeout is being used instead of our custom timeout[/yellow]")
+                    
+                    if "cancel scope" in error_msg.lower():
+                        # This is expected when generator is closed - ignore it and continue
+                        pass
+                    else:
+                        self._update_progress("OpenAI Agent", f"❌ Connection error: {error_msg[:50]}")
+                        return AgentResult(
+                            agent_name="OpenAI Agent",
+                            success=False,
+                            output="",
+                            error=f"{error_msg} (Check logs for full trace)",
+                            timing_steps=timing_steps
+                        )
                 step.finish()
                 
                 step = TimingStep("Agent Initialization", datetime.now())
                 timing_steps.append(step)
                 self._update_progress("OpenAI Agent", "Initializing OpenAI Agent...")
                 
-                model = os.environ.get("OPENAI_MODEL", "gpt-4o")
+                # Get model from instance, env var, or default
+                model = self.openai_model if self.openai_model else os.environ.get("OPENAI_MODEL", "gpt-4o")
+                
+                # Build comprehensive instructions for the agent (put in Agent.instructions to avoid context limit)
+                # Build concise instructions for the agent (shortened to avoid context length issues)
+                agent_instructions = """You are an autonomous AI agent with access to MCP server tools. Prefix outputs with 'OpenAI Agent: '.
+
+SAFETY: Only do what's explicitly requested. Don't create entities unless asked. When in doubt, don't proceed.
+
+USER DISCOVERY: Before messaging users, discover their info using MCP tools (usersList, conversationsList). Never hardcode IDs. For "send to me" or "DM me", find the user's DM channel first.
+
+CLARIFICATION: If task is unclear, output exactly: "CLARIFICATION_NEEDED: [your question]". Wait for response before proceeding.
+
+COMPLETION: Actually execute tool calls (don't just describe). Complete all steps. Verify success before reporting done."""
+                
                 # Set temperature if provided
                 agent_kwargs = {
                     "name": "OpenAI Agent",
-                    "instructions": "You are an autonomous AI agent with access to MCP server tools. Use the available tools to complete tasks as requested. When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'",
+                    "instructions": agent_instructions,
                     "model": model,
                     "mcp_servers": [mcp_server]
                 }
@@ -714,63 +1285,8 @@ After requesting clarification, wait for the user's response, then proceed with 
                 step = TimingStep("Task Execution", datetime.now())
                 timing_steps.append(step)
                 
-                # Code of Conduct: Principle-based safety and scope limitations
-                code_of_conduct = """CODE OF CONDUCT - These principles take precedence over all other instructions:
-
-1. PRINCIPLE OF LEAST PRIVILEGE: Only do what is explicitly requested. Do NOT create, modify, or interact with entities beyond what is directly required. Do NOT create users, profiles, accounts, channels, or any other entities unless explicitly requested.
-
-2. PRINCIPLE OF CAUTION: When in doubt, don't do it. If unsure whether an action is appropriate, do NOT proceed. Err on the side of caution - it is better to report that something cannot be done safely than to attempt it.
-
-3. PRINCIPLE OF SCOPE LIMITATION: Stay within bounds. Only use tools and take actions directly related to completing the stated task. Do not explore, test, or experiment with tools beyond what is needed. Do not create entities to "demonstrate capabilities."
-
-4. PRINCIPLE OF EXPLICIT PERMISSION: Only perform actions explicitly requested in the task. Do not assume that creating entities is acceptable even if it might help. Do not create workarounds that involve creating new entities.
-
-5. PRINCIPLE OF MINIMAL IMPACT: Take the smallest set of actions necessary. Avoid actions with side effects beyond the immediate task. Prefer read-only operations when possible.
-
-If a task seems to require creating new entities or taking actions outside the explicit scope, report this as a limitation rather than proceeding."""
-                
-                # Minimal instructions - let the agent be autonomous
-                # Add agent identification requirement and task completion requirement
-                #
-                # CRITICAL WARNING: AI agents will try to DM anyone and everyone if not explicitly restricted.
-                # They will search for users, find users, and message random people.
-                # DO NOT allow agents to search for users or message anyone except the specified channel.
-                # This restriction MUST be explicit and repeated to prevent unwanted messaging.
-                #
-                # User reference instructions
-                user_reference = "IMPORTANT: When the task refers to 'me', 'myself', 'I', or 'the user', you should interpret this as referring to 'the user', 'self', or 'the system owner'. All messages, information, and outputs should be directed to the user (self). When the task says 'send to me' or 'DM me', it means send to the user (self) via the specified channel."
-                #
-                # CRITICAL: Explicit target restriction - ONLY D025N5FN3RT on Slack
-                target_restriction = "CRITICAL: For ALL messages on Slack, you MUST use channel ID D025N5FN3RT. This is the ONLY channel you are allowed to use. Do NOT use any other channel ID. Do NOT search for users. Do NOT find users. Do NOT message anyone else. ONLY D025N5FN3RT. When using chatPostMessage or any messaging tool, the channel parameter MUST be 'D025N5FN3RT'. No exceptions."
-                
-                # Clarification instructions - agent determines if clarification is needed
-                clarification_instructions = """CLARIFICATION PROTOCOL: Before executing the task, analyze if the task is clear and complete. If the task is unclear, ambiguous, or missing critical information needed for execution, you MUST request clarification from the user.
-
-To request clarification, output exactly: "CLARIFICATION_NEEDED: [your specific question]"
-
-Examples:
-- If task says "send a message" but doesn't specify what message: "CLARIFICATION_NEEDED: What message should I send?"
-- If task says "post to channel" but doesn't specify which channel: "CLARIFICATION_NEEDED: Which channel should I post to?"
-- If task is clear and complete: Proceed directly with execution.
-
-After requesting clarification, wait for the user's response, then proceed with the clarified task. Only proceed with execution when you have all necessary information."""
-                
-                # Task completion instructions with explicit message sending requirement
-                task_completion = """CRITICAL TASK COMPLETION REQUIREMENTS:
-
-1. If the task requires sending a message to Slack, you MUST:
-   - Use the chatPostMessage tool
-   - Set channel parameter to 'D025N5FN3RT' (this is the ONLY allowed channel)
-   - Actually execute the tool call - do not just describe what you would do
-   - Verify the message was sent successfully before reporting completion
-
-3. You must actually COMPLETE the task, not just start it. The task is only complete when you have successfully executed the final action (e.g., sent the message, posted the content, completed the operation).
-
-4. If you encounter an error, report it clearly in your output so the user understands what went wrong. Still attempt at least one tool call even if errors occur.
-
-5. You may need to do multiple steps - do ALL of them. Only report completion when the task is truly finished."""
-                
-                interpreted_task = f"{task}\n\n{code_of_conduct}\n\n{user_reference}\n\n{target_restriction}\n\n{clarification_instructions}\n\n{task_completion}\n\nIMPORTANT: When posting messages or providing output, always prefix with 'OpenAI Agent: ' followed by your message. Example: 'OpenAI Agent: My favorite color is Red.'"
+                # Keep task minimal - instructions are already in Agent.instructions
+                interpreted_task = task
                 
                 current_task = interpreted_task
                 
@@ -781,18 +1297,46 @@ After requesting clarification, wait for the user's response, then proceed with 
                 max_clarification_rounds = 3
                 agent_output = ""
                 
+                output_parts = []  # Initialize output_parts
                 while clarification_rounds <= max_clarification_rounds:
                     # Execute agent (Runner.run is synchronous, so run in thread)
                     # Note: Runner.run might be async, check and handle both cases
                     try:
-                        # Try as async first
-                        if asyncio.iscoroutinefunction(Runner.run):
-                            result = await Runner.run(agent, current_task)
+                        # Try as async first with timeout
+                        if inspect.iscoroutinefunction(Runner.run):
+                            result = await asyncio.wait_for(
+                                Runner.run(agent, current_task),
+                                timeout=180.0  # 3 minute timeout for task execution
+                            )
                         else:
-                            result = await asyncio.to_thread(Runner.run, agent, current_task)
+                            result = await asyncio.wait_for(
+                                asyncio.to_thread(Runner.run, agent, current_task),
+                                timeout=180.0  # 3 minute timeout for task execution
+                            )
+                    except asyncio.TimeoutError:
+                        output_parts.append("Error: Task execution timed out after 3 minutes")
+                        agent_output = "\n".join(output_parts)
+                        break
                     except TypeError:
                         # Fallback to thread if it's not async
-                        result = await asyncio.to_thread(Runner.run, agent, current_task)
+                        try:
+                            result = await asyncio.wait_for(
+                                asyncio.to_thread(Runner.run, agent, current_task),
+                                timeout=180.0  # 3 minute timeout
+                            )
+                        except asyncio.TimeoutError:
+                            output_parts.append("Error: Task execution timed out after 3 minutes")
+                            agent_output = "\n".join(output_parts)
+                            break
+                    except Exception as e:
+                        error_msg = str(e)
+                        # Handle context length errors
+                        if "context_length_exceeded" in error_msg.lower() or "context window" in error_msg.lower():
+                            output_parts.append("Error: Context length exceeded. Task too long. Try a shorter task or use --openai-model gpt-4-turbo")
+                            agent_output = "\n".join(output_parts)
+                            break
+                        # Re-raise other errors
+                        raise
                     
                     # Collect output
                     if hasattr(result, 'final_output') and result.final_output:
@@ -812,25 +1356,68 @@ After requesting clarification, wait for the user's response, then proceed with 
                     if "CLARIFICATION_NEEDED:" in agent_output and self.interactive_prompt:
                         # Extract the question
                         clarification_match = agent_output.split("CLARIFICATION_NEEDED:")[-1].strip()
+                        # Clean up the match - remove any trailing text that might be after the question
+                        if "\n" in clarification_match:
+                            clarification_match = clarification_match.split("\n")[0].strip()
                         if clarification_match:
                             # Show agent's question and get user response
+                            console.print()  # Add spacing
+                            console.print(Panel(
+                                f"[bold cyan]🤖 OpenAI Agent needs clarification:[/bold cyan]\n\n{clarification_match}",
+                                title="Clarification Request",
+                                border_style="yellow"
+                            ))
+                            console.print()
                             try:
-                                clarification_prompt = f"[bold cyan]OpenAI Agent asks:[/bold cyan] {clarification_match}\n[yellow]Your response: [/yellow]"
-                                user_response = await asyncio.to_thread(
-                                    self.interactive_prompt,
-                                    clarification_prompt
-                                )
+                                # Check if interactive_prompt is async or sync
+                                # Try to call it and check if result is a coroutine
+                                prompt_result = self.interactive_prompt("[bold yellow]Your response: [/bold yellow]")
+                                if inspect.iscoroutine(prompt_result):
+                                    # It's async - await it
+                                    user_response = await prompt_result
+                                elif inspect.iscoroutinefunction(self.interactive_prompt):
+                                    # Function is async but we got a coroutine - await it
+                                    user_response = await prompt_result
+                                else:
+                                    # It's sync - use the result directly
+                                    user_response = prompt_result
+                                
+                                # Ensure user_response is a string (handle coroutine objects that weren't awaited)
+                                if inspect.iscoroutine(user_response):
+                                    console.print("[red]ERROR: Got coroutine object instead of string! This is a bug.[/red]")
+                                    user_response = ""
+                                if user_response is None:
+                                    user_response = ""
+                                user_response = str(user_response)
+                                
                                 if user_response and user_response.strip():
-                                    # Add clarification to task and continue
-                                    current_task = f"{current_task}\n\n[User clarification: {user_response.strip()}]"
+                                    # Add clarification to task in a clear format that the agent will understand
+                                    # Make it explicit so the agent doesn't ask again
+                                    clarification_text = user_response.strip()
+                                    # Format clarification to be very explicit and prevent looping
+                                    current_task = f"""{current_task}
+
+CRITICAL USER CLARIFICATION - USE THIS INFORMATION NOW:
+{clarification_text}
+
+IMPORTANT: The user has provided the above clarification. You MUST use this information to complete the task. Do NOT ask for clarification again on this topic. If the clarification mentions a channel, use that channel. If it mentions a message, use that message. Proceed with execution using this information."""
                                     clarification_rounds += 1
                                     agent_output = ""  # Reset for next round
+                                    console.print()  # New line after input
+                                    console.print(f"[green]✓ Received: {clarification_text}[/green]")
+                                    console.print("[dim]Continuing with clarification...[/dim]\n")
                                     # Continue loop to re-execute with clarification
                                     continue
                                 else:
                                     # User pressed Enter - proceed anyway
+                                    console.print("[yellow]No response provided, proceeding anyway...[/yellow]\n")
                                     break
                             except (EOFError, KeyboardInterrupt):
+                                console.print("\n[yellow]Clarification cancelled, proceeding...[/yellow]\n")
+                                break
+                            except Exception as e:
+                                console.print(f"[red]Error getting clarification: {e}[/red]")
+                                console.print("[yellow]Proceeding without clarification...[/yellow]\n")
                                 break
                     
                     # No clarification needed or max rounds reached - break
@@ -869,11 +1456,18 @@ After requesting clarification, wait for the user's response, then proceed with 
             if timing_steps and not timing_steps[-1].end_time:
                 timing_steps[-1].finish()
             execution_time = (datetime.now() - start_time).total_seconds()
+            error_msg = str(e)
+            # Handle context length errors specifically
+            if "context_length_exceeded" in error_msg.lower() or "context window" in error_msg.lower():
+                error_msg = "Context length exceeded. Task or instructions too long. Try a shorter task or use a model with larger context window (e.g., gpt-4-turbo)."
+            # Don't show cancel scope errors - they're internal
+            elif "cancel scope" in error_msg.lower():
+                error_msg = "MCP connection error (internal)"
             return AgentResult(
                 agent_name="OpenAI Agent",
                 success=False,
                 output="",
-                error=str(e),
+                error=error_msg,
                 execution_time=execution_time,
                 timing_steps=timing_steps
             )
@@ -928,22 +1522,86 @@ After requesting clarification, wait for the user's response, then proceed with 
                 """Handle input requests in round-robin fashion."""
                 while True:
                     try:
-                        # Wait for input request with timeout
-                        agent_name, prompt_text = await asyncio.wait_for(
+                        # Wait for input request with timeout - allow 2 minutes for clarification
+                        queue_item = await asyncio.wait_for(
                             self.input_queue.get(),
-                            timeout=1.0
+                            timeout=120.0  # 2 minute timeout for user input (as requested)
                         )
+                        
+                        # Unpack queue item (agent_name, prompt_text, original_task)
+                        if len(queue_item) == 3:
+                            agent_name, prompt_text, original_task = queue_item
+                        elif len(queue_item) == 2:
+                            agent_name, prompt_text = queue_item
+                            original_task = None
+                        else:
+                            # Invalid format, skip
+                            self.input_queue.task_done()
+                            continue
                         
                         # Get user input with context
                         try:
                             # Show context about what agent is doing
                             context_prompt = f"[yellow][{agent_name}][/yellow]\n[dim]Requesting input during execution...[/dim]\n[yellow]{prompt_text}[/yellow]"
-                            user_input = await asyncio.to_thread(
-                                original_prompt_for_handler,
-                                context_prompt
-                            )
-                            self.input_responses[agent_name] = user_input or ""
+                            
+                            # Display the clarification request
+                            console.print()
+                            console.print(Panel(
+                                f"[bold cyan]🤖 {agent_name} needs clarification:[/bold cyan]\n\n{prompt_text}",
+                                title="Clarification Request",
+                                border_style="cyan"
+                            ))
+                            console.print()
+                            
+                            # Simple input prompt - cursor appears right after this text
+                            console.print("[bold yellow]Your response: [/bold yellow]", end="")
+                            import sys
+                            sys.stdout.flush()
+                            
+                            # Check if original_prompt_for_handler is async or sync
+                            # IMPORTANT: Use console.input() directly for better interactive support
+                            try:
+                                # Use console.input() which properly handles interactive terminals
+                                if inspect.iscoroutinefunction(original_prompt_for_handler):
+                                    user_input = await original_prompt_for_handler("")
+                                else:
+                                    # For sync functions, run in thread to avoid blocking
+                                    # But ensure we're using console.input() which handles terminals properly
+                                    user_input = await asyncio.to_thread(
+                                        original_prompt_for_handler,
+                                        ""  # Empty string since we already printed the prompt
+                                    )
+                            except Exception as e:
+                                # Final fallback: read from stdin directly
+                                console.print(f"[yellow]⚠️  Using stdin fallback: {e}[/yellow]")
+                                try:
+                                    import sys
+                                    # Flush output to ensure prompt is visible
+                                    sys.stdout.flush()
+                                    user_input = await asyncio.to_thread(sys.stdin.readline)
+                                    if user_input:
+                                        user_input = user_input.strip()
+                                    else:
+                                        user_input = ""
+                                except Exception:
+                                    user_input = ""
+                            
+                            # Ensure we have a string
+                            if user_input is None:
+                                user_input = ""
+                            user_input = str(user_input).strip()
+                            
+                            # If still empty after waiting, log it
+                            if not user_input:
+                                console.print("[yellow]No response provided, proceeding anyway...[/yellow]\n")
+                            
+                            self.input_responses[agent_name] = user_input
                         except (EOFError, KeyboardInterrupt):
+                            console.print("\n[yellow]Clarification cancelled, proceeding...[/yellow]\n")
+                            self.input_responses[agent_name] = ""
+                        except Exception as e:
+                            # Log error but still set empty response to unblock agent
+                            console.print(f"[yellow]Warning: Error getting input for {agent_name}: {e}[/yellow]")
                             self.input_responses[agent_name] = ""
                         
                         self.input_queue.task_done()
@@ -1032,31 +1690,168 @@ def print_banner():
     console.print()
 
 
-def select_agents() -> List[str]:
-    """Interactive agent selection."""
-    console.print()
-    console.print("[bold]Available Agents:[/bold]")
-    console.print()
-    
+async def select_agents_with_validation() -> List[str]:
+    """Interactive agent selection with API key validation."""
     agents = {
-        "1": ("anthropic", "Anthropic Agent (Claude Agent SDK)", "blue"),
-        "2": ("langchain", "Langchain Agent (Langchain MCP)", "green"),
-        "3": ("openai", "OpenAI Agent (OpenAI Agents SDK)", "yellow")
+        "1": ("anthropic", "Anthropic Agent (Claude Agent SDK)", "blue", "ANTHROPIC_API_KEY"),
+        "2": ("langchain", "Langchain Agent (Langchain MCP)", "green", "ANTHROPIC_API_KEY or OPENAI_API_KEY"),
+        "3": ("openai", "OpenAI Agent (OpenAI Agents SDK)", "yellow", "OPENAI_API_KEY")
     }
     
-    for key, (id, name, color) in agents.items():
-        console.print(f"  [{color}]{key}[/{color}]. {name}")
+    # Validate API keys
+    console.print("[dim]Validating API keys...[/dim]")
+    validation_results = await validate_api_keys()
     
     console.print()
+    console.print("[bold cyan]Select agents:[/bold cyan]")
+    for key, (id, name, color, key_req) in agents.items():
+        # Check if API key is available and validated
+        if id == "anthropic":
+            has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+            if "ANTHROPIC_API_KEY" in validation_results:
+                is_valid, msg = validation_results["ANTHROPIC_API_KEY"]
+                key_status = f"[green]✓[/green] {msg}" if is_valid else f"[red]✗[/red] {msg}"
+            else:
+                key_status = "[green]✓[/green]" if has_key else "[red]✗[/red]"
+        elif id == "langchain":
+            has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
+            has_openai = bool(os.environ.get("OPENAI_API_KEY"))
+            has_key = has_anthropic or has_openai
+            # Show validation for whichever key is available
+            if has_anthropic and "ANTHROPIC_API_KEY" in validation_results:
+                is_valid, msg = validation_results["ANTHROPIC_API_KEY"]
+                key_status = f"[green]✓[/green] {msg}" if is_valid else f"[red]✗[/red] {msg}"
+            elif has_openai and "OPENAI_API_KEY" in validation_results:
+                is_valid, msg = validation_results["OPENAI_API_KEY"]
+                key_status = f"[green]✓[/green] {msg}" if is_valid else f"[red]✗[/red] {msg}"
+            else:
+                key_status = "[green]✓[/green]" if has_key else "[red]✗[/red]"
+        else:  # openai
+            has_key = bool(os.environ.get("OPENAI_API_KEY"))
+            if "OPENAI_API_KEY" in validation_results:
+                is_valid, msg = validation_results["OPENAI_API_KEY"]
+                key_status = f"[green]✓[/green] {msg}" if is_valid else f"[red]✗[/red] {msg}"
+            else:
+                key_status = "[green]✓[/green]" if has_key else "[red]✗[/red]"
+        
+        console.print(f"  [{color}]{key}[/{color}]. {name} {key_status} (requires {key_req})")
+    
+    console.print("  [bold cyan]4. All agents[/bold cyan] (recommended for comparison)")
+    console.print()
+    console.print("[dim]💡 Tip: Invalid/expired keys will cause agent failures[/dim]")
+    console.print()
+    
     try:
-        selection = console.input("[bold cyan]Select agents (comma-separated, e.g., 1,2,3 or 'all'): [/bold cyan]").strip()
+        selection = console.input("[bold cyan]Choice (1-4, 'all', or comma-separated, e.g., 1,2,3): [/bold cyan]").strip()
         if not selection:
-            selection = "all"
+            selection = "4"  # Default to all
     except (EOFError, KeyboardInterrupt):
-        console.print("\n[yellow]Using all agents by default[/yellow]")
+        console.print("\n[yellow]⚠️  Selection cancelled, using all agents[/yellow]")
         return ["anthropic", "langchain", "openai"]
     
-    if selection.lower() == "all":
+    # Normalize selection - handle "all" or "4"
+    if selection.lower() == "all" or selection == "4":
+        # Check for missing or invalid keys
+        missing = []
+        invalid = []
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            missing.append("ANTHROPIC_API_KEY")
+        elif "ANTHROPIC_API_KEY" in validation_results:
+            is_valid, msg = validation_results["ANTHROPIC_API_KEY"]
+            if not is_valid:
+                invalid.append(f"ANTHROPIC_API_KEY: {msg}")
+        
+        if not os.environ.get("OPENAI_API_KEY"):
+            missing.append("OPENAI_API_KEY")
+        elif "OPENAI_API_KEY" in validation_results:
+            is_valid, msg = validation_results["OPENAI_API_KEY"]
+            if not is_valid:
+                invalid.append(f"OPENAI_API_KEY: {msg}")
+        
+        if missing:
+            console.print(f"[yellow]⚠️  Warning: Missing API keys: {', '.join(missing)}[/yellow]")
+        if invalid:
+            console.print(f"[red]❌ Error: Invalid/expired API keys:[/red]")
+            for inv in invalid:
+                console.print(f"[red]   • {inv}[/red]")
+        if missing or invalid:
+            console.print("[yellow]   Some agents may fail. This is your responsibility.[/yellow]")
+        return ["anthropic", "langchain", "openai"]
+    
+    selected = []
+    for num in selection.split(","):
+        num = num.strip()
+        if num in agents:
+            agent_id, agent_name, _, key_req = agents[num]
+            # Warn if key missing or invalid
+            if agent_id == "anthropic":
+                if not os.environ.get("ANTHROPIC_API_KEY"):
+                    console.print(f"[yellow]⚠️  Warning: ANTHROPIC_API_KEY not set. {agent_name} may fail.[/yellow]")
+                elif "ANTHROPIC_API_KEY" in validation_results:
+                    is_valid, msg = validation_results["ANTHROPIC_API_KEY"]
+                    if not is_valid:
+                        console.print(f"[red]❌ Error: ANTHROPIC_API_KEY is invalid/expired: {msg}[/red]")
+                        console.print(f"[red]   {agent_name} will fail.[/red]")
+            elif agent_id == "langchain":
+                has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
+                has_openai = bool(os.environ.get("OPENAI_API_KEY"))
+                if not (has_anthropic or has_openai):
+                    console.print(f"[yellow]⚠️  Warning: No API keys set. {agent_name} may fail.[/yellow]")
+                elif has_anthropic and "ANTHROPIC_API_KEY" in validation_results:
+                    is_valid, msg = validation_results["ANTHROPIC_API_KEY"]
+                    if not is_valid:
+                        console.print(f"[red]❌ Error: ANTHROPIC_API_KEY is invalid/expired: {msg}[/red]")
+                elif has_openai and "OPENAI_API_KEY" in validation_results:
+                    is_valid, msg = validation_results["OPENAI_API_KEY"]
+                    if not is_valid:
+                        console.print(f"[red]❌ Error: OPENAI_API_KEY is invalid/expired: {msg}[/red]")
+            elif agent_id == "openai":
+                if not os.environ.get("OPENAI_API_KEY"):
+                    console.print(f"[yellow]⚠️  Warning: OPENAI_API_KEY not set. {agent_name} may fail.[/yellow]")
+                elif "OPENAI_API_KEY" in validation_results:
+                    is_valid, msg = validation_results["OPENAI_API_KEY"]
+                    if not is_valid:
+                        console.print(f"[red]❌ Error: OPENAI_API_KEY is invalid/expired: {msg}[/red]")
+                        console.print(f"[red]   {agent_name} will fail.[/red]")
+            selected.append(agent_id)
+    
+    if not selected:
+        console.print("[yellow]⚠️  No valid agents selected. Using all agents.[/yellow]")
+        return ["anthropic", "langchain", "openai"]
+    
+    return selected
+
+
+# Keep old select_agents for backward compatibility, but it's now deprecated
+# Use select_agents_with_validation() instead
+def select_agents() -> List[str]:
+    """Deprecated: Use select_agents_with_validation() for API key validation."""
+    # Fallback to basic selection without validation
+    agents = {
+        "1": ("anthropic", "Anthropic Agent (Claude Agent SDK)", "blue", "ANTHROPIC_API_KEY"),
+        "2": ("langchain", "Langchain Agent (Langchain MCP)", "green", "ANTHROPIC_API_KEY or OPENAI_API_KEY"),
+        "3": ("openai", "OpenAI Agent (OpenAI Agents SDK)", "yellow", "OPENAI_API_KEY")
+    }
+    
+    console.print("[bold cyan]Select agents:[/bold cyan]")
+    for key, (id, name, color, key_req) in agents.items():
+        if id == "anthropic":
+            has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+        elif id == "langchain":
+            has_key = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"))
+        else:
+            has_key = bool(os.environ.get("OPENAI_API_KEY"))
+        key_status = "[green]✓[/green]" if has_key else "[red]✗[/red]"
+        console.print(f"  [{color}]{key}[/{color}]. {name} {key_status} (requires {key_req})")
+    
+    console.print("  4. All agents")
+    console.print()
+    
+    try:
+        selection = console.input("[bold cyan]Choice (1-4 or comma-separated): [/bold cyan]").strip()
+        if not selection or selection == "4" or selection.lower() == "all":
+            return ["anthropic", "langchain", "openai"]
+    except (EOFError, KeyboardInterrupt):
         return ["anthropic", "langchain", "openai"]
     
     selected = []
@@ -1065,11 +1860,7 @@ def select_agents() -> List[str]:
         if num in agents:
             selected.append(agents[num][0])
     
-    if not selected:
-        console.print("[yellow]No valid agents selected. Using all agents.[/yellow]")
-        return ["anthropic", "langchain", "openai"]
-    
-    return selected
+    return selected if selected else ["anthropic", "langchain", "openai"]
 
 
 def generate_timing_log(results: List[AgentResult], task: str, mcp_url: str) -> str:
@@ -1130,13 +1921,36 @@ def generate_timing_log(results: List[AgentResult], task: str, mcp_url: str) -> 
     return log_content
 
 
-def display_results(results: List[AgentResult], task: str, mcp_url: str):
-    """Display results in a nice format."""
+def display_results(results: List[AgentResult], task: str, mcp_url: str, mcp_capabilities: Optional[Dict[str, Any]] = None):
+    """Display results in a nice format with dynamic KPIs based on MCP server capabilities."""
     console.print()
     console.print("╔══════════════════════════════════════════════════════════╗", style="bold green")
     console.print("║  📊 Execution Results                                   ║", style="bold green")
     console.print("╚══════════════════════════════════════════════════════════╝", style="bold green")
     console.print()
+    
+    # Discover MCP capabilities if not provided (for dynamic KPI generation)
+    if mcp_capabilities is None:
+        mcp_capabilities = {}
+    
+    # Determine success metrics based on MCP server type
+    server_type = "generic"
+    if "slack" in mcp_url.lower() or mcp_capabilities.get("messaging", False):
+        server_type = "slack"
+    elif "gitlab" in mcp_url.lower() or mcp_capabilities.get("git", False):
+        server_type = "gitlab"
+    elif "salesforce" in mcp_url.lower() or mcp_capabilities.get("crm", False):
+        server_type = "salesforce"
+    
+    # Define success metrics per server type
+    success_metrics = {
+        "slack": {"primary": "Message Sent"},
+        "gitlab": {"primary": "Operation Completed"},
+        "salesforce": {"primary": "Record Created/Updated"},
+        "generic": {"primary": "Tool Calls Executed"}
+    }
+    
+    metrics = success_metrics.get(server_type, success_metrics["generic"])
     
     # Summary table with KPIs
     table = Table(title="Execution Summary", box=box.ROUNDED)
@@ -1144,7 +1958,7 @@ def display_results(results: List[AgentResult], task: str, mcp_url: str):
     table.add_column("Status", justify="center")
     table.add_column("Time", justify="right", style="dim")
     table.add_column("Tools", justify="center", style="dim")
-    table.add_column("Message", justify="center")
+    table.add_column(metrics["primary"], justify="center")
     table.add_column("Safety", justify="center")
     table.add_column("Error", style="red")
 
@@ -1153,7 +1967,15 @@ def display_results(results: List[AgentResult], task: str, mcp_url: str):
         status_style = "green" if result.success else "red"
         time_str = f"{result.execution_time:.2f}s"
         tools_str = f"{result.tool_calls_successful}/{result.tool_calls_count}" if result.tool_calls_count > 0 else "N/A"
-        message_str = "✅" if result.message_sent else "❌"
+        
+        # Dynamic success metric based on server type
+        if server_type == "slack":
+            primary_metric = "✅" if result.message_sent else "❌"
+        elif server_type in ["gitlab", "salesforce"]:
+            primary_metric = "✅" if result.tool_calls_count > 0 and result.success else "❌"
+        else:  # generic
+            primary_metric = "✅" if result.tool_calls_count > 0 else "❌"
+        
         safety_str = "✅" if result.safety_constraints_followed else "⚠️"
         error_str = result.error[:50] + "..." if result.error and len(result.error) > 50 else (result.error or "")
 
@@ -1162,7 +1984,7 @@ def display_results(results: List[AgentResult], task: str, mcp_url: str):
             f"[{status_style}]{status}[/{status_style}]",
             time_str,
             tools_str,
-            message_str,
+            primary_metric,
             safety_str,
             error_str
         )
@@ -1170,39 +1992,88 @@ def display_results(results: List[AgentResult], task: str, mcp_url: str):
     console.print(table)
     console.print()
     
-    # KPI Summary Table
-    kpi_table = Table(title="Key Performance Indicators (KPIs)", box=box.ROUNDED)
+    # Define success metrics per server type (expanded)
+    success_metrics = {
+        "slack": {
+            "primary": "Message Sent",
+            "secondary": "Target Reached",
+            "description": "Success = message delivered to target channel"
+        },
+        "gitlab": {
+            "primary": "Operation Completed",
+            "secondary": "Target Reached",
+            "description": "Success = operation completed (commit, issue, MR, etc.)"
+        },
+        "salesforce": {
+            "primary": "Record Created/Updated",
+            "secondary": "Target Reached",
+            "description": "Success = record created/updated successfully"
+        },
+        "generic": {
+            "primary": "Tool Calls Executed",
+            "secondary": "Operation Completed",
+            "description": "Success = tools called and operations completed"
+        }
+    }
+    
+    metrics = success_metrics.get(server_type, success_metrics["generic"])
+    
+    # Dynamic KPI Summary Table based on server capabilities
+    kpi_title = f"Key Performance Indicators (KPIs) - {server_type.upper()} Server"
+    kpi_table = Table(title=kpi_title, box=box.ROUNDED)
     kpi_table.add_column("Agent", style="cyan")
     kpi_table.add_column("Tool Calls", justify="center")
     kpi_table.add_column("Success Rate", justify="center")
-    kpi_table.add_column("Message Sent", justify="center")
-    kpi_table.add_column("Target Reached", justify="center")
+    kpi_table.add_column(metrics["primary"], justify="center")
+    kpi_table.add_column(metrics["secondary"], justify="center")
     kpi_table.add_column("Safety Followed", justify="center")
+    
+    console.print(f"[dim]{metrics['description']}[/dim]")
+    console.print()
     
     for result in results:
         success_rate = f"{(result.tool_calls_successful/result.tool_calls_count*100):.1f}%" if result.tool_calls_count > 0 else "N/A"
         
-        # Message sent with failure reason if applicable
-        if result.message_sent:
-            message_sent = "[green]✅ Yes[/green]"
-        else:
-            reason = result.message_failure_reason or "Unknown reason"
-            message_sent = f"[red]❌ No[/red]\n[dim]{reason[:60]}...[/dim]" if len(reason) > 60 else f"[red]❌ No[/red]\n[dim]{reason}[/dim]"
+        # Dynamic primary metric based on server type
+        if server_type == "slack":
+            if result.message_sent:
+                primary = "[green]✅ Yes[/green]"
+            else:
+                reason = result.message_failure_reason or "Unknown reason"
+                primary = f"[red]❌ No[/red]\n[dim]{reason[:60]}...[/dim]" if len(reason) > 60 else f"[red]❌ No[/red]\n[dim]{reason}[/dim]"
+        elif server_type == "gitlab":
+            if result.tool_calls_count > 0 and result.success:
+                primary = "[green]✅ Yes[/green]"
+            else:
+                reason = result.tool_failure_details[0] if result.tool_failure_details else "No operations completed"
+                primary = f"[red]❌ No[/red]\n[dim]{reason[:60]}...[/dim]" if len(reason) > 60 else f"[red]❌ No[/red]\n[dim]{reason}[/dim]"
+        elif server_type == "salesforce":
+            if result.tool_calls_count > 0 and result.success:
+                primary = "[green]✅ Yes[/green]"
+            else:
+                reason = result.tool_failure_details[0] if result.tool_failure_details else "No records created/updated"
+                primary = f"[red]❌ No[/red]\n[dim]{reason[:60]}...[/dim]" if len(reason) > 60 else f"[red]❌ No[/red]\n[dim]{reason}[/dim]"
+        else:  # generic
+            if result.tool_calls_count > 0:
+                primary = "[green]✅ Yes[/green]"
+            else:
+                reason = result.tool_failure_details[0] if result.tool_failure_details else "No tools called"
+                primary = f"[red]❌ No[/red]\n[dim]{reason[:60]}...[/dim]" if len(reason) > 60 else f"[red]❌ No[/red]\n[dim]{reason}[/dim]"
         
-        # Target reached with failure reason if applicable
+        # Secondary metric (target reached for all)
         if result.target_reached:
-            target_reached = "[green]✅ Yes[/green]"
+            secondary = "[green]✅ Yes[/green]"
         else:
             reason = result.target_failure_reason or "Unknown reason"
-            target_reached = f"[red]❌ No[/red]\n[dim]{reason[:60]}...[/dim]" if len(reason) > 60 else f"[red]❌ No[/red]\n[dim]{reason}[/dim]"
+            secondary = f"[red]❌ No[/red]\n[dim]{reason[:60]}...[/dim]" if len(reason) > 60 else f"[red]❌ No[/red]\n[dim]{reason}[/dim]"
         
         safety_followed = "[green]✅ Yes[/green]" if result.safety_constraints_followed else "[yellow]⚠️ No[/yellow]"
         kpi_table.add_row(
             result.agent_name,
             f"{result.tool_calls_count}",
             success_rate,
-            message_sent,
-            target_reached,
+            primary,
+            secondary,
             safety_followed
         )
     
@@ -1237,8 +2108,7 @@ async def main():
     
     parser.add_argument(
         "--mcp-url",
-        required=True,
-        help="MCP server URL (e.g., https://server.com/mcp)"
+        help="MCP server URL (e.g., https://server.com/mcp). If not provided, will prompt in interactive mode."
     )
     parser.add_argument(
         "--auth-header",
@@ -1263,10 +2133,100 @@ async def main():
         default=None,
         help="Temperature for model generation (0.0-2.0, default: model default)"
     )
+    parser.add_argument(
+        "--openai-model",
+        dest="openai_model",
+        help="OpenAI model to use (e.g., gpt-4o, gpt-4o-mini, gpt-4-turbo). Overrides OPENAI_MODEL env var."
+    )
     
     args = parser.parse_args()
     
+    # Load .env file if it exists (already loaded at top, but ensure it's done)
+    try:
+        from dotenv import load_dotenv
+        script_dir = Path(__file__).parent
+        env_file = script_dir / ".env"
+        if env_file.exists():
+            load_dotenv(env_file, override=False)  # Don't override existing env vars
+            console.print(f"[dim]📁 Loaded .env file from {env_file}[/dim]")
+        else:
+            # Check parent directory
+            parent_env = script_dir.parent / ".env"
+            if parent_env.exists():
+                load_dotenv(parent_env, override=False)
+                console.print(f"[dim]📁 Loaded .env file from {parent_env}[/dim]")
+    except ImportError:
+        pass  # python-dotenv not installed
+    
     print_banner()
+    
+    # Quick validation check on startup (non-blocking)
+    console.print("[dim]🔍 Checking API keys...[/dim]")
+    try:
+        validation_results = await validate_api_keys()
+        if validation_results:
+            console.print()
+            for key_name, (is_valid, msg) in validation_results.items():
+                if is_valid:
+                    console.print(f"[green]✓ {key_name}: {msg}[/green]")
+                else:
+                    console.print(f"[red]✗ {key_name}: {msg}[/red]")
+            console.print()
+    except Exception as e:
+        # Don't block if validation fails
+        console.print(f"[dim]⚠️  Could not validate API keys: {e}[/dim]")
+        console.print()
+    
+    # Get MCP URL - generic, works with any MCP server (MUST come before task prompt)
+    mcp_url = args.mcp_url
+    if not mcp_url and not args.no_interactive:
+        # Prompt for MCP URL in interactive mode with guidance
+        console.print()
+        console.print(Panel(
+            "[bold cyan]MCP Server Configuration[/bold cyan]\n\n"
+            "This tool is a [bold]universal MCP interface[/bold] that works with [bold]any MCP server[/bold].\n\n"
+            "[yellow]Best Practices:[/yellow]\n"
+            "  • Use the full MCP endpoint URL (usually ends with /mcp)\n"
+            "  • Verify the server is accessible before proceeding\n"
+            "  • Set MCP_SERVER_URL environment variable to skip this prompt\n\n"
+            "[dim]Note: Connection success/failure depends on your server configuration.[/dim]",
+            title="Universal MCP Interface",
+            border_style="cyan"
+        ))
+        console.print()
+        console.print("[yellow]Example MCP servers:[/yellow]")
+        console.print("  • Slack: https://ztaid-stkaeb2t-e4l2dawa5a-uc.a.run.app/mcp")
+        console.print("  • Custom: https://your-mcp-server.com/mcp")
+        console.print()
+        # Check for default in environment
+        default_url = os.environ.get("MCP_SERVER_URL")
+        if default_url:
+            console.print(f"[dim]💡 Found MCP_SERVER_URL in environment: {default_url}[/dim]")
+            console.print(f"[dim]   Press Enter to use this, or type a different URL[/dim]")
+            console.print()
+        try:
+            mcp_url = console.input(f"[bold cyan]MCP Server URL[/bold cyan]{f' [{default_url}]: ' if default_url else ': '}").strip()
+            if not mcp_url and default_url:
+                mcp_url = default_url
+                console.print(f"[green]✓ Using environment default: {mcp_url}[/green]")
+            elif not mcp_url:
+                console.print("[red]❌ Error: MCP URL is required. Please provide a valid MCP server URL.[/red]")
+                console.print("[yellow]💡 Tip: Set MCP_SERVER_URL environment variable or use --mcp-url flag[/yellow]")
+                sys.exit(1)
+            else:
+                console.print(f"[green]✓ Using provided URL: {mcp_url}[/green]")
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[red]❌ Error: MCP URL input cancelled by user[/red]")
+            console.print("[yellow]💡 Tip: Use --mcp-url flag or set MCP_SERVER_URL for non-interactive use[/yellow]")
+            sys.exit(1)
+    elif not mcp_url:
+        # Try environment variable as fallback
+        mcp_url = os.environ.get("MCP_SERVER_URL")
+        if not mcp_url:
+            console.print("[red]❌ Error: --mcp-url is required in non-interactive mode[/red]")
+            console.print("[yellow]💡 Tip: Provide --mcp-url flag or set MCP_SERVER_URL environment variable[/yellow]")
+            sys.exit(1)
+        console.print(f"[yellow]Using MCP_SERVER_URL from environment: {mcp_url}[/yellow]")
     
     # Get task
     if args.task:
@@ -1275,21 +2235,33 @@ async def main():
         console.print("[red]Error: --no-interactive requires --task and --agents[/red]")
         sys.exit(1)
     else:
-        # Always try interactive mode - let it fail gracefully if not available
-        console.print("[bold]Enter the task for the agents (they pick the color):[/bold]")
-        console.print("[dim]Examples:[/dim]")
-        console.print("[dim]- \"Make a short post about your favorite color (you choose) to the DM target\"[/dim]")
-        console.print("[dim]- \"List available tools, then do a DM-only action using them\"[/dim]")
-        console.print("[dim]- \"Summarize the latest messages in the DM channel\"[/dim]")
+        # Interactive mode with guidance
         console.print()
-        console.print("[yellow]Safety reminder:[/yellow] Agents run in DM-only mode, must prefix with their agent name, must not post in public, and should keep responses short.")
-        console.print("[yellow]Tip:[/yellow] Use --task/--agents flags for non-interactive runs; interactive mode simply takes the sentence you type here.")
+        console.print(Panel(
+            "[bold cyan]Task Input[/bold cyan]\n\n"
+            "Enter the task you want the agents to execute using the MCP server.\n\n"
+            "[yellow]Best Practices:[/yellow]\n"
+            "  • Be specific about what you want done\n"
+            "  • Mention which MCP tools to use if relevant\n"
+            "  • Agents will automatically discover available tools\n"
+            "  • Agents may ask for clarification if needed\n\n"
+            "[dim]Note: Task success depends on your task clarity and MCP server capabilities.[/dim]",
+            title="Task Configuration",
+            border_style="cyan"
+        ))
+        console.print()
+        console.print("[yellow]Example Tasks:[/yellow]")
+        console.print("  • \"List all available tools from the MCP server\"")
+        console.print("  • \"Send a message saying hello to the target channel\"")
+        console.print("  • \"Search for recent messages and summarize them\"")
+        console.print()
+        console.print("[dim]💡 Tip: Use --task flag for non-interactive mode[/dim]")
         console.print()
         try:
             task = console.input("[bold cyan]Task: [/bold cyan]")
         except (EOFError, KeyboardInterrupt):
-            console.print("\n[red]Error: Task input cancelled or not available[/red]")
-            console.print("[yellow]Tip: Use --task flag for non-interactive mode[/yellow]")
+            console.print("\n[red]❌ Error: Task input cancelled by user[/red]")
+            console.print("[yellow]💡 Tip: Use --task flag for non-interactive mode[/yellow]")
             sys.exit(1)
     
     if not task or not task.strip():
@@ -1309,44 +2281,61 @@ async def main():
         sys.exit(1)
     else:
         if not is_interactive():
-            console.print("[red]Error: Not running in interactive terminal[/red]")
-            console.print("[yellow]Tip: Use --agents flag, or run in an interactive terminal[/yellow]")
+            console.print("[red]❌ Error: Not running in interactive terminal[/red]")
+            console.print("[yellow]💡 Tip: Use --agents flag, or run in an interactive terminal[/yellow]")
             sys.exit(1)
         
+        # Interactive agent selection with guidance and API key validation
+        console.print()
+        console.print(Panel(
+            "[bold cyan]Agent Selection[/bold cyan]\n\n"
+            "Select which AI agents to use for this task.\n\n"
+            "[yellow]Available Agents:[/yellow]\n"
+            "  • [bold]anthropic[/bold] - Claude (Anthropic SDK)\n"
+            "  • [bold]langchain[/bold] - Langchain framework\n"
+            "  • [bold]openai[/bold] - GPT (OpenAI SDK)\n\n"
+            "[yellow]Best Practices:[/yellow]\n"
+            "  • Select 'all' to compare agent outputs\n"
+            "  • Select specific agents to test individually\n"
+            "  • API keys will be validated automatically\n\n"
+            "[dim]Note: Agent success depends on API key validity and MCP server compatibility.[/dim]",
+            title="Agent Selection",
+            border_style="cyan"
+        ))
+        console.print()
         try:
-            selected_agents = select_agents()
+            selected_agents = await select_agents_with_validation()
         except (EOFError, KeyboardInterrupt):
-            console.print("\n[yellow]Using all agents by default[/yellow]")
+            console.print("\n[yellow]⚠️  Using all agents by default (user cancelled selection)[/yellow]")
             selected_agents = ["anthropic", "langchain", "openai"]
     
+    # Display configuration summary with user responsibility notice
     console.print()
-    console.print(f"[bold]Task:[/bold] {task}")
-    console.print(f"[bold]Selected Agents:[/bold] {', '.join(selected_agents)}")
+    console.print(Panel(
+        f"[bold]Configuration Summary[/bold]\n\n"
+        f"[cyan]Task:[/cyan] {task}\n"
+        f"[cyan]Selected Agents:[/cyan] {', '.join(selected_agents)}\n"
+        f"[cyan]MCP Server:[/cyan] {mcp_url}\n\n"
+        f"[yellow]⚠️  User Responsibility:[/yellow]\n"
+        f"  • Task success depends on your task clarity\n"
+        f"  • Agent success depends on API key configuration\n"
+        f"  • MCP connection depends on server availability\n"
+        f"  • All results are based on your configuration choices\n\n"
+        f"[dim]Proceeding with execution...[/dim]",
+        title="Ready to Execute",
+        border_style="green"
+    ))
+    console.print()
     
-    # Show MCP server selection
-    # Extract server name from URL
+    # Extract server name for display
     try:
         from urllib.parse import urlparse
-        parsed = urlparse(args.mcp_url)
+        parsed = urlparse(mcp_url)
         mcp_server_name = parsed.netloc.split('.')[0] if parsed.netloc else parsed.path.split('/')[-2] if '/' in parsed.path else "MCP Server"
     except:
-        mcp_server_name = args.mcp_url.split('/')[-2] if '/' in args.mcp_url else "MCP Server"
+        mcp_server_name = mcp_url.split('/')[-2] if '/' in mcp_url else "MCP Server"
     
-    console.print(f"[bold]MCP Server:[/bold] {args.mcp_url}")
-    console.print(f"[green]✓ Default server selected: {mcp_server_name}[/green]")
-    console.print()
-    
-    # Task interpretation and feasibility check
-    console.print(Panel(
-        "[bold]Task Interpretation:[/bold]\n\n"
-        f"The agents will interpret: '{task}'\n\n"
-        "Each agent will:\n"
-        "  1. Analyze if the task is completable with available MCP tools\n"
-        "  2. Report if the task cannot be completed before querying the server\n"
-        "  3. Execute the task using the MCP server tools if feasible",
-        title="Task Analysis",
-        border_style="yellow"
-    ))
+    console.print(f"[dim]Connecting to MCP server: {mcp_server_name}[/dim]")
     console.print()
     
     # Persistent loading screen class
@@ -1455,31 +2444,37 @@ async def main():
         if not loading_screen or not is_interactive():
             console.print(f"[dim][{timestamp}][/dim] [cyan]{agent_name}:[/cyan] {status}")
     
-    # Create interactive prompt function if in interactive mode
-    interactive_prompt_fn = None
-    if is_interactive() and not args.no_interactive:
-        def get_user_input(prompt_text: str) -> str:
-            """Get user input during agent execution with context."""
-            try:
-                # Print the prompt (which may include multi-line context)
+    # Create interactive prompt function - ALWAYS set it (clarification requests need user input)
+    # Only skip if explicitly disabled with --no-interactive flag
+    def get_user_input(prompt_text: str) -> str:
+        """Get user input during agent execution with context."""
+        try:
+            # If prompt_text is provided, print it; otherwise assume it's already printed
+            if prompt_text:
                 console.print()  # New line for clarity
                 console.print(prompt_text)
-                # Get input on next line
-                return console.input()
-            except (EOFError, KeyboardInterrupt):
-                return ""
+            # Use console.input() which properly handles interactive terminals
+            # This ensures typing works correctly in all modes
+            return console.input()
+        except (EOFError, KeyboardInterrupt):
+            return ""
+    
+    # Always set interactive_prompt unless explicitly disabled
+    interactive_prompt_fn = None
+    if not args.no_interactive:
         interactive_prompt_fn = get_user_input
     
     # Get target identifier from environment or use None for generic deployment
     target_identifier = os.environ.get("MCP_TARGET_IDENTIFIER", None)
     
     runner = AgentRunner(
-        mcp_url=args.mcp_url, 
+        mcp_url=mcp_url,
         auth_header=args.auth_header, 
         progress_callback=update_progress,
         interactive_prompt=interactive_prompt_fn,
         temperature=args.temperature,
-        target_identifier=target_identifier
+        target_identifier=target_identifier,
+        openai_model=args.openai_model if hasattr(args, 'openai_model') and args.openai_model else None
     )
     
     console.print()
@@ -1502,11 +2497,11 @@ async def main():
     
     console.print()  # New line after progress updates
     
-    # Display results
-    display_results(results, task, args.mcp_url)
+    # Display results with dynamic KPIs
+    display_results(results, task, mcp_url, runner.mcp_capabilities)
     
     # Generate and save timing log
-    log_content = generate_timing_log(results, task, args.mcp_url)
+    log_content = generate_timing_log(results, task, mcp_url)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_filename = f"agent_timing_log_{timestamp}.md"
     log_path = os.path.join(os.path.dirname(__file__), log_filename)
