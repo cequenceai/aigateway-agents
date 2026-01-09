@@ -1153,33 +1153,23 @@ IMPORTANT: The user has provided the above clarification. You MUST use this info
                 )
                 
                 # Connect with timeout to prevent hanging
-                # Add detailed error logging to diagnose ClientRequest timeout
                 try:
-                    # Enable detailed logging for MCP and httpx to trace the 5.0s timeout
-                    import logging
-                    mcp_logger = logging.getLogger("agents.mcp")
-                    httpx_logger = logging.getLogger("httpx")
-                    mcp_logger.setLevel(logging.DEBUG)
-                    httpx_logger.setLevel(logging.DEBUG)
+                    self._update_progress("OpenAI Agent", "Connecting to MCP server...")
                     
-                    self._update_progress("OpenAI Agent", "Connecting to MCP server (this may take a moment)...")
-                    console.print("[dim]🔍 DEBUG: About to call mcp_server.connect()...[/dim]")
-                    console.print(f"[dim]   MCP URL: {self.mcp_url}[/dim]")
-                    console.print(f"[dim]   Params timeout: {mcp_server._params.get('timeout', 'N/A') if hasattr(mcp_server, '_params') else 'N/A'}[/dim]")
+                    # Only enable verbose logging in debug mode
+                    if DEBUG_MODE:
+                        import logging
+                        logging.getLogger("agents.mcp").setLevel(logging.DEBUG)
+                        logging.getLogger("httpx").setLevel(logging.DEBUG)
+                        console.print("[dim]🔍 DEBUG: Connecting to MCP server...[/dim]")
                     
-                    # Wrap connect() with detailed error handling
+                    # Connect with extended timeout
                     try:
-                        console.print("[dim]   Calling mcp_server.connect() - watch for httpx DEBUG logs...[/dim]")
-                        console.print("[dim]   If you see 'FACTORY CALL #' in logs, the factory is being used[/dim]")
-                        console.print("[dim]   If you see 5.0s timeout, the factory may not be called[/dim]")
-                        console.print()
-                        
                         await asyncio.wait_for(
                             mcp_server.connect(),
-                            timeout=120.0  # Increased to 2 minutes to allow for slow initial connection
+                            timeout=120.0  # 2 minutes for slow connections
                         )
-                        self._update_progress("OpenAI Agent", "✓ MCP connection established")
-                        console.print("[green]✓ Connection successful - no timeout errors[/green]")
+                        self._update_progress("OpenAI Agent", "✓ MCP connected")
                     except Exception as connect_error:
                         # Log the exact error and stack trace
                         import traceback
@@ -2495,119 +2485,46 @@ async def main():
     
     # Persistent loading screen class
     class LoadingScreen:
-        """Persistent loading screen that stays in position."""
+        """Simple status display that prints updates without Live display.
+        
+        Using Live display causes issues with logging output, so we use
+        simple timestamped log lines instead.
+        """
         def __init__(self, agent_names: List[str]):
             self.agent_names = agent_names
             self.statuses = {name: "Initializing..." for name in agent_names}
-            self.live = None
             self.start_time = datetime.now()
-        
-        def render(self):
-            """Render the loading screen."""
-            elapsed = (datetime.now() - self.start_time).total_seconds()
-            elapsed_str = f"{elapsed:.1f}s"
-            
-            # Create status rows for each agent with proper spinner rendering
-            rows = []
-            for agent_name in self.agent_names:
-                status = self.statuses.get(agent_name, "Waiting...")
-                # Use spinner emoji that animates, or use a simple icon
-                spinner_icon = "⏳"  # Hourglass emoji as spinner
-                rows.append(f"  {spinner_icon} [bold cyan]{agent_name}:[/bold cyan] {status}")
-            
-            content = "\n".join(rows)
-            content += f"\n\n[dim]⏱  Elapsed: {elapsed_str}[/dim]"
-            
-            return Panel(
-                content,
-                title="[bold cyan]🤖 Agent Execution[/bold cyan]",
-                border_style="cyan",
-                padding=(1, 2)
-            )
+            self._paused = False
         
         def update_status(self, agent_name: str, status: str):
-            """Update status for an agent."""
+            """Update and print status for an agent."""
             with _loading_lock:
                 if agent_name in self.statuses:
+                    old_status = self.statuses[agent_name]
                     self.statuses[agent_name] = status
-                    if self.live and self.live.is_started:
-                        self.live.update(self.render())
+                    # Only print if status changed and not paused
+                    if not self._paused and status != old_status:
+                        timestamp = datetime.now().strftime("%H:%M:%S")
+                        console.print(f"[dim][{timestamp}][/dim] [cyan]{agent_name}:[/cyan] {status}")
         
         def start(self):
-            """Start the live display with auto-refresh for elapsed time."""
-            self._stop_event = Event()
-            self.live = Live(
-                self.render(), 
-                console=console, 
-                refresh_per_second=2,  # Update every 0.5 seconds for smooth elapsed time
-                vertical_overflow="visible"
-            )
-            self.live.start()
-            # Start background thread to continuously update elapsed time
-            def update_loop():
-                while not self._stop_event.is_set():
-                    try:
-                        # Wait 0.5 seconds, or break if event is set
-                        if self._stop_event.wait(0.5):
-                            break
-                        # Update the display with new elapsed time
-                        if self.live:
-                            try:
-                                self.live.update(self.render())
-                            except Exception:
-                                break
-                    except Exception:
-                        break
-            self._update_thread = Thread(target=update_loop, daemon=True)
-            self._update_thread.start()
+            """Start tracking - just print initial message."""
+            console.print()
+            console.print("[bold cyan]Running agents in parallel with round-robin input queue...[/bold cyan]")
+            console.print()
         
         def pause(self):
-            """Pause the live display to allow user input."""
-            if hasattr(self, '_stop_event'):
-                self._stop_event.set()  # Stop the update thread
-            if hasattr(self, '_update_thread'):
-                self._update_thread.join(timeout=1.0)
-            if self.live and self.live.is_started:
-                self.live.stop()
-                console.print()  # New line after stopping live display
+            """Pause status updates during user input."""
+            self._paused = True
         
         def resume(self):
-            """Resume the live display after user input."""
-            if self.live is None or not self.live.is_started:
-                # Restart the live display
-                self._stop_event = Event()
-                self.live = Live(
-                    self.render(), 
-                    console=console, 
-                    refresh_per_second=2,
-                    vertical_overflow="visible"
-                )
-                self.live.start()
-                # Restart update thread
-                def update_loop():
-                    while not self._stop_event.is_set():
-                        try:
-                            if self._stop_event.wait(0.5):
-                                break
-                            if self.live:
-                                try:
-                                    self.live.update(self.render())
-                                except Exception:
-                                    break
-                        except Exception:
-                            break
-                self._update_thread = Thread(target=update_loop, daemon=True)
-                self._update_thread.start()
+            """Resume status updates after user input."""
+            self._paused = False
         
         def stop(self):
-            """Stop the live display."""
-            if hasattr(self, '_stop_event'):
-                self._stop_event.set()
-            if hasattr(self, '_update_thread'):
-                self._update_thread.join(timeout=1.0)  # Wait up to 1 second for thread to finish
-            if self.live:
-                self.live.stop()
-                self.live = None
+            """Stop the status display - print final elapsed time."""
+            elapsed = (datetime.now() - self.start_time).total_seconds()
+            console.print(f"\n[dim]Total elapsed: {elapsed:.1f}s[/dim]\n")
     
     # Initialize loading screen after we know which agents are selected
     loading_screen = None
@@ -2626,15 +2543,15 @@ async def main():
             global _loading_screen
             _loading_screen = loading_screen
     
-    # Progress callback that updates both console and loading screen
+    # Progress callback that updates the loading screen
     def update_progress(agent_name: str, status: str):
         """Update progress display."""
-        timestamp = datetime.now().strftime('%H:%M:%S')
-        # Update loading screen if available
+        # Update loading screen if available (it handles printing)
         if loading_screen:
             loading_screen.update_status(agent_name, status)
-        # Also print to console for non-interactive or as backup
-        if not loading_screen or not is_interactive():
+        else:
+            # Fallback for non-interactive mode
+            timestamp = datetime.now().strftime('%H:%M:%S')
             console.print(f"[dim][{timestamp}][/dim] [cyan]{agent_name}:[/cyan] {status}")
     
     # Create interactive prompt function - ALWAYS set it (clarification requests need user input)
@@ -2721,4 +2638,7 @@ if __name__ == "__main__":
         level=logging.WARNING,  # Reduce noise from agent libraries
         format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
     )
+    # Suppress verbose httpx logging (HTTP request details)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     asyncio.run(main())
