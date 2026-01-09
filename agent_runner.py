@@ -1539,6 +1539,11 @@ IMPORTANT: The user has provided the above clarification. You MUST use this info
                         
                         # Get user input with context
                         try:
+                            # CRITICAL: Pause the loading screen to allow user input
+                            # The Live display interferes with terminal input
+                            if _loading_screen:
+                                _loading_screen.pause()
+                            
                             # Show context about what agent is doing
                             context_prompt = f"[yellow][{agent_name}][/yellow]\n[dim]Requesting input during execution...[/dim]\n[yellow]{prompt_text}[/yellow]"
                             
@@ -1590,15 +1595,27 @@ IMPORTANT: The user has provided the above clarification. You MUST use this info
                             # If still empty after waiting, log it
                             if not user_input:
                                 console.print("[yellow]No response provided, proceeding anyway...[/yellow]\n")
+                            else:
+                                console.print(f"[green]✓ Received: {user_input}[/green]\n")
                             
                             self.input_responses[agent_name] = user_input
+                            
+                            # Resume the loading screen after getting input
+                            if _loading_screen:
+                                _loading_screen.resume()
                         except (EOFError, KeyboardInterrupt):
                             console.print("\n[yellow]Clarification cancelled, proceeding...[/yellow]\n")
                             self.input_responses[agent_name] = ""
+                            # Resume the loading screen
+                            if _loading_screen:
+                                _loading_screen.resume()
                         except Exception as e:
                             # Log error but still set empty response to unblock agent
                             console.print(f"[yellow]Warning: Error getting input for {agent_name}: {e}[/yellow]")
                             self.input_responses[agent_name] = ""
+                            # Resume the loading screen
+                            if _loading_screen:
+                                _loading_screen.resume()
                         
                         self.input_queue.task_done()
                     except asyncio.TimeoutError:
@@ -2401,6 +2418,44 @@ async def main():
                         break
             self._update_thread = Thread(target=update_loop, daemon=True)
             self._update_thread.start()
+        
+        def pause(self):
+            """Pause the live display to allow user input."""
+            if hasattr(self, '_stop_event'):
+                self._stop_event.set()  # Stop the update thread
+            if hasattr(self, '_update_thread'):
+                self._update_thread.join(timeout=1.0)
+            if self.live and self.live.is_started:
+                self.live.stop()
+                console.print()  # New line after stopping live display
+        
+        def resume(self):
+            """Resume the live display after user input."""
+            if self.live is None or not self.live.is_started:
+                # Restart the live display
+                self._stop_event = Event()
+                self.live = Live(
+                    self.render(), 
+                    console=console, 
+                    refresh_per_second=2,
+                    vertical_overflow="visible"
+                )
+                self.live.start()
+                # Restart update thread
+                def update_loop():
+                    while not self._stop_event.is_set():
+                        try:
+                            if self._stop_event.wait(0.5):
+                                break
+                            if self.live:
+                                try:
+                                    self.live.update(self.render())
+                                except Exception:
+                                    break
+                        except Exception:
+                            break
+                self._update_thread = Thread(target=update_loop, daemon=True)
+                self._update_thread.start()
         
         def stop(self):
             """Stop the live display."""
