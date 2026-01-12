@@ -18,6 +18,11 @@ ENV/
 # Environment variables
 .env
 .env.local
+.env.*.local
+
+# Test files that might contain keys
+*test_api_key*.py
+*_api_key*.py
 
 # OAuth tokens (sensitive)
 .mcp_agent_tokens/
