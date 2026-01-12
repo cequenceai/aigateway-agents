@@ -80,6 +80,14 @@ Environment Variables:
         help="LLM model name (default: provider-specific default or MCP_AGENT_MODEL env var)",
     )
 
+    # Debug options
+    debug_group = parser.add_argument_group("Debug Options")
+    debug_group.add_argument(
+        "--skip-tools",
+        action="store_true",
+        help="Skip fetching tools and test direct MCP HTTP communication instead",
+    )
+
     return parser.parse_args()
 
 
@@ -268,7 +276,7 @@ async def main() -> None:
             await chat_loop(agent)
 
         # Run the agent session
-        await run_agent_session(config, on_agent_ready)
+        await run_agent_session(config, on_agent_ready, skip_tools=args.skip_tools)
 
     except ValueError as e:
         console.print(f"[red]Configuration error: {e}[/red]")

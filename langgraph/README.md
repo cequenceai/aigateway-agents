@@ -1,4 +1,4 @@
-# LangGraph MCP Agent
+# MCP Agent CLI
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
@@ -18,8 +18,8 @@ An interactive terminal agent that connects to [Model Context Protocol (MCP)](ht
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/cequenceai/aigateway-agents.git
-cd aigateway-agents/langgraph
+git clone https://github.com/cequenceai/mcp_agent.git
+cd mcp_agent
 
 # 2. Install dependencies
 pip install -r requirements.txt
@@ -42,8 +42,8 @@ python mcp_agent.py --mcp-url http://localhost:8000/mcp
 
 ```bash
 # Clone the repository
-git clone https://github.com/cequenceai/aigateway-agents.git
-cd aigateway-agents/langgraph
+git clone https://github.com/cequenceai/mcp_agent.git
+cd mcp_agent
 
 # (Recommended) Create a virtual environment
 python -m venv venv
@@ -155,7 +155,7 @@ flowchart TB
 ### Project Structure
 
 ```
-langgraph/
+mcp_agent/
 ├── mcp_agent.py          # CLI entry point with Rich terminal UI
 ├── agent/
 │   ├── __init__.py
@@ -334,9 +334,9 @@ Contributions are welcome! Here's how you can help:
 ### Development Setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/cequenceai/aigateway-agents.git
-cd aigateway-agents/langgraph
+# Clone your fork
+git clone https://github.com/cequenceai/mcp_agent.git
+cd mcp_agent
 
 # Create virtual environment
 python -m venv venv
