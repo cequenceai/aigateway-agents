@@ -1,0 +1,5 @@
+# Core dependencies for agent_runner.py
+# Install with: pip install -r requirements.txt
+
+python-dotenv>=1.0.0
+rich>=13.0.0

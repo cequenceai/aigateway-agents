@@ -1,0 +1,87 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.local
+
+# OAuth tokens (sensitive)
+.mcp_agent_tokens/
+*.token
+*.key
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test results
+test_results_*.json
+*.coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Agent coordination data (can be regenerated)
+.agents/scratchpad.json
+.agents/mactg.json
+.agents/tdag.json
+.agents/bdh.json
+
+# Cursor
+.cursor/
+
+# Deprecated folders (keep structure but ignore contents)
+**/deprecated/
+deprecated/
+ANTHROPIC_AGENT_OLD_BACKUP/
+MCP_AGENT_REFERENCE/
+
+# Test scripts (keep only core test suites in tests/ directories)
+**/test_*.py
+!**/tests/test_*.py
+**/quick_*.py
+**/run_*.sh
+**/run_*.py
+**/*_test.py
+!**/tests/**/*_test.py
+
+# Diagnostic and one-off scripts (not part of core product)
+**/diagnose_*.py
+**/verify_*.py
+**/find_my_*.py
+**/*_api_key*.py
+**/example_*.py
+**/*_test.sh
+**/test_*.sh
+**/run_all_*.sh

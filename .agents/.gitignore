@@ -1,0 +1,6 @@
+# Lock file (auto-generated)
+.lock
+
+# Keep scratchpad.json in git so agents can see it
+# But ignore if you want it to be local-only
+# scratchpad.json

@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Test files that might contain keys
+*test_api_key*.py
+*_api_key*.py
+
+# OAuth tokens (sensitive)
+.mcp_agent_tokens/
+*.token
+*.key
+
+# Logs
+*.log
+logs/
+agent_timing_log_*.md
+
+# Deprecated files (preserved for reference)
+deprecated/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test results
+test_results_*.json
+*.coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.bak
+
+# Diagnostic and utility scripts (moved to deprecated)
+diagnose_*.py
+find_my_*.py
+verify_*.py
+*_test.sh
+run_all_*.sh
+test_*.sh
+
+# Logs directory contents
+logs/
+*.json
+!package.json
+!package-lock.json
+
+# Environment files with keys
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Scripts with potential keys
+scripts/
+!scripts/README.md
