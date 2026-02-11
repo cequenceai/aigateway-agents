@@ -76,6 +76,10 @@ MCP_AGENT_REFERENCE/
 **/*_test.py
 !**/tests/**/*_test.py
 
+# Legacy root scripts (obsolete - reference old ANTHROPIC_AGENT/MCP_AGENT layout)
+manage.py
+setup.py
+
 # Diagnostic and one-off scripts (not part of core product)
 **/diagnose_*.py
 **/verify_*.py
